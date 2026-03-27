@@ -1,61 +1,94 @@
 ![ieeecs-template-header](https://github.com/user-attachments/assets/c3c40c85-51a2-4a5e-82a4-c32a0223e336)
 
-<h1 align="center">Project Name</h1>
+<h1 align="center">Research Alignment Agent</h1>
 
-<h4 align="center">One-line description of the project.</h4>
+<h4 align="center">An AI-powered system for analyzing academic papers, detecting alignment or contradictions, and maintaining research consistency over time.</h4>
 
 ---
 
 ## Overview
 
-Provide a concise description of:
+Academic research often involves referencing multiple papers across different timelines, making it difficult to ensure consistency and alignment between sources.
 
-- The problem being addressed  
-- Why it is relevant  
-- What this project aims to achieve  
+This project aims to build a **research alignment agent** that helps users analyze academic papers, compare new research with previously referenced work, and detect agreements or contradictions.
+
+The system allows users to upload drafts, topics, and reference papers, while maintaining a long-term contextual memory. When new research is introduced, it evaluates whether it aligns with or contradicts earlier work—even if those references were added weeks earlier.
+
+---
+
+## Core Features
+
+* Upload research papers, drafts, and topics
+* Generate embeddings and maintain long-term memory
+* Detect alignment or contradiction between research papers
+* Summarize academic documents
+* Answer relevance-based queries
+* Suggest references based on highlighted sections
+* Context-aware reasoning across time
 
 ---
 
 ## Architecture Overview
 
-Provide a high-level explanation of the system design.
+The system consists of the following components:
 
-Include:
+* **Input Module**
+  Handles user uploads (PDFs, drafts, topics)
 
-- Core components  
-- Data flow between components  
-- External integrations (if applicable)  
+* **Embedding Engine**
+  Converts documents into vector representations
 
-(Optional) Include an architecture diagram if available.
+* **Vector Database (Memory Layer)**
+  Stores embeddings for long-term contextual retrieval
+
+* **Alignment Engine**
+  Compares new inputs with stored research and detects alignment or contradiction
+
+* **LLM Module**
+  Generates summaries, explanations, and answers queries
+
+* **Query Interface / API Layer**
+  Enables interaction with the system
+
+### Data Flow
+
+1. User uploads documents or drafts
+2. Documents are processed and converted into embeddings
+3. Embeddings are stored in a vector database
+4. New documents are compared with existing memory
+5. Alignment or contradiction is detected
+6. Results are returned with summaries and explanations
 
 ---
 
 ## Tech Stack
 
-| Layer        | Technology Used |
-|-------------|-----------------|
-| Frontend    |                 |
-| Backend     |                 |
-| Database    |                 |
-| DevOps      |                 |
-| Other Tools |                 |
+| Layer       | Technology Used               |
+| ----------- | ----------------------------- |
+| Backend     | Python (FastAPI)              |
+| LLM         | OpenAI API                    |
+| Embeddings  | OpenAI / SentenceTransformers |
+| Database    | FAISS / Pinecone              |
+| DevOps      | Docker, GitHub Actions        |
+| Other Tools | LangChain / LlamaIndex        |
 
 ---
 
 ## Project Structure
 
-Briefly describe the key directories and their purpose.
-
-Example:
-
 ```bash
 src/
-├── components/
-├── services/
-├── utils/
-├── routes/
-└── main.js
+├── agent/          # Core agent logic
+├── embeddings/     # Embedding + retrieval logic
+├── memory/         # Vector database handling
+├── alignment/      # Alignment & contradiction detection
+├── api/            # FastAPI routes
+└── utils/          # Helper functions
+
+tests/              # Test cases
+docs/               # Documentation (optional)
 ```
+
 ---
 
 ## ⚙️ Setup Instructions
@@ -64,29 +97,27 @@ src/
 
 ```bash
 git clone <repository-url>
-cd <project-folder>
+cd Research-Agent
 ```
 
 ### 2. Install Dependencies
 
-Example:
-
 ```bash
-npm install
+pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment Variables
 
-Create a `.env` file in the root directory and define the required variables.
+```bash
+cp .env.example .env
+```
 
-Refer to `.env.example` for the list of required keys.
+Update `.env` with your credentials.
 
 ### 4. Run the Project
 
-Example:
-
 ```bash
-npm run dev
+uvicorn src.api.main:app --reload
 ```
 
 ---
@@ -96,70 +127,84 @@ npm run dev
 ### Build Image
 
 ```bash
-docker build -t <project-name> .
+docker build -t research-agent .
 ```
 
 ### Run Container
 
 ```bash
-docker run -p <port>:<port> <project-name>
+docker run -p 8000:8000 research-agent
 ```
+
 ---
 
 ## Git Hooks Setup
 
-This repository uses custom Git hooks to enforce commit standards and branch discipline.
+This repository uses custom Git hooks to enforce commit standards and workflow discipline.
 
-After cloning the repository, run the following command once:
+After cloning the repository, run:
 
 ```bash
-git config core.hooksPath .hooks
+git config core.hooksPath .githooks
 ```
+
 This enables:
-- Commit message validation
-- Blocking direct pushes to `main`
+
+* Commit message validation
+* Pre-push checks
 
 ---
 
 ## Environment Variables
 
-List all required environment variables and briefly explain their purpose.
+| Variable Name  | Description                         |
+| -------------- | ----------------------------------- |
+| OPENAI_API_KEY | API key for LLM access              |
+| VECTOR_DB_KEY  | Vector database API key (if remote) |
+| MODEL_NAME     | Model used for embeddings/LLM       |
+| PORT           | Application port                    |
 
-| Variable Name | Description |
-|--------------|------------|
-| DATABASE_URL | Database connection string |
-| API_KEY      | Third-party API key |
-| PORT         | Application port |
+---
+
+## Example Use Case
+
+1. User uploads a draft paper and reference materials
+2. System stores and embeds key ideas
+3. Weeks later, user uploads a new research paper
+4. System detects contradictions with previously cited work
+5. User receives a detailed explanation and summary
+6. User highlights a section → system suggests relevant references
 
 ---
 
 ## Deployment
 
-Describe:
-
-- Deployment platform  
-- Build steps  
-- Production considerations  
+* Containerized using Docker
+* Can be deployed on AWS / GCP / Azure
+* CI/CD handled via GitHub Actions
 
 ---
 
-## Testing (If Applicable)
-
-Provide instructions to run tests.
-
-Example:
+## Testing
 
 ```bash
-npm test
+pytest
 ```
+
 ---
 
 ## Project Status
 
-- 🟢 In Development  
-- 🟡 Maintenance Mode  
-- 🔵 Completed  
-- 🔴 Archived  
+🟢 In Development
 
+---
 
+## Contributing
 
+Please refer to `CONTRIBUTING.md` for contribution guidelines.
+
+---
+
+## License
+
+This project is licensed under the terms of the MIT License.
