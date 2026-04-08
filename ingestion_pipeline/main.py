@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from summarizer import run_pipeline
 from schemas import ParsedDocument, UploadResponse
 from file_utils import save_upload, cleanup, validate_extension
+from chroma_store import store_document_in_chroma  # ✅ Added import
 
 # ✅ Load env
 load_dotenv()
@@ -71,6 +72,12 @@ async def upload_document(
         status="success",
     )
 
+    # ✅ NEW: Store the chunks and metadata into ChromaDB
+    try:
+        store_document_in_chroma(doc)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to store in ChromaDB: {str(e)}")
+
     return UploadResponse(
         doc_id=doc.doc_id,
         filename=doc.filename,
@@ -78,5 +85,5 @@ async def upload_document(
         version_id=doc.version_id,
         total_sections=doc.total_sections,
         sections=doc.sections,
-        message="Processed successfully",
+        message="Processed and stored successfully", # ✅ Updated message
     )
