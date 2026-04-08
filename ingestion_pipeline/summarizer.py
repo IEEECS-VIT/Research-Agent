@@ -18,7 +18,7 @@ genai.configure(api_key=api_key)
 
 # gemini-2.0-flash-lite has a higher free-tier quota than gemini-2.0-flash
 # swap back to "gemini-2.0-flash" once you enable billing
-MODEL_NAME = "models/gemini-1.5-flash-001"
+MODEL_NAME = "models/gemini-1.5-flash-8b"
 model = genai.GenerativeModel(MODEL_NAME)
 
 SYSTEM_PROMPT = """You are a research paper analyst.
@@ -56,7 +56,7 @@ SKIP_SECTIONS = {
 
 MAX_INPUT_CHARS = 6000
 # Delay between each API call — critical on free tier (15 RPM limit)
-INTER_REQUEST_DELAY = 5   # seconds; increase to 10 if still hitting 429
+INTER_REQUEST_DELAY = 2   # seconds; increase to 10 if still hitting 429
 
 
 def build_prompt(section_name: str, text: str) -> str:
