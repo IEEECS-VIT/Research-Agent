@@ -6,3 +6,5 @@ docling==2.5.2
 python-dotenv==1.0.1
 pydantic==2.9.2
 chromadb>=0.4.24
+numpy<2.0.0
+google-genai>=0.3.0
