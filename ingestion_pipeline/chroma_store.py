@@ -1,14 +1,17 @@
 import os
-import time
 import asyncio
-
-# ✅ FIX 1: Keep telemetry disabled at the OS level
-os.environ["ANONYMIZED_TELEMETRY"] = "False"
-os.environ["CHROMA_TELEMETRY_IMPL"] = "None"
-
 import chromadb
 from google import genai
 from schemas import ParsedDocument
+
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY_IMPL"] = "None"
+
+# 1. Initialize client as a global singleton outside of any transient threads.
+# This ensures the SQLite file lock is held stably by the main process.
+CHROMA_DATA_DIR = os.path.join(os.path.dirname(__file__), "chroma_data_v9")
+chroma_client = chromadb.PersistentClient(path=CHROMA_DATA_DIR)
+collection = chroma_client.get_or_create_collection(name="research_papers_v9")
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
     """Splits text into overlapping chunks to preserve context across boundaries."""
@@ -25,20 +28,9 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
 
 def _sync_chroma_write(docs_to_insert, metadatas, ids, all_embeddings, doc_id):
     """
-    ✅ FIX 2: This function runs entirely inside a single background worker thread.
-    By creating the PersistentClient AND calling upsert in the exact same thread, 
-    we completely bypass Windows SQLite thread-locking deadlocks.
+    Executes the blocking I/O operation using the globally initialized collection.
     """
-    print("    [ChromaDB] Initializing local SQLite database connection...")
-    CHROMA_DATA_DIR = os.path.join(os.path.dirname(__file__), "chroma_data_v9")
-    
-    # 1. Open connection inside this thread
-    client = chromadb.PersistentClient(path=CHROMA_DATA_DIR)
-    
-    # 2. Get collection inside this thread
-    collection = client.get_or_create_collection(name="research_papers_v9")
-    
-    # 3. Write data inside this thread
+    print("    [ChromaDB] Inserting vectors into local database...")
     collection.upsert(
         documents=docs_to_insert,
         metadatas=metadatas,
@@ -116,7 +108,7 @@ async def store_document_in_chroma(doc: ParsedDocument):
 
     print("\n    [ChromaDB] Writing to local database...")
     try:
-        # ✅ FIX 3: Hand the data off to the isolated worker thread
+        # 2. Delegate ONLY the upsert operation to the thread
         await asyncio.to_thread(
             _sync_chroma_write,
             docs_to_insert,
