@@ -109,6 +109,14 @@ async def summarise_all(sections: list[dict]) -> list[SectionSummary]:
 
          print(f"  [{i+1}/{total}] Summarising: {name}...")
          summary = await summarise_section(name, sec["raw_text"])
+         
+         # ✅ FIX: Restored the logic to actually save the summary data
+         results.append(SectionSummary(
+             section_name=name,
+             raw_text=sec["raw_text"],
+             summary=summary,
+         ))
+         
          print(f"  [{i+1}/{total}] ✅ Done: {name}")
 
          if i < total - 1:

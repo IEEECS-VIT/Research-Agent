@@ -15,74 +15,74 @@ from chroma_store import store_document_in_chroma
 load_dotenv()
 
 if not os.getenv("GEMINI_API_KEY"):
-     raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env file.")
+    raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env file.")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-     Path("uploads").mkdir(exist_ok=True)
-     yield
+    Path("uploads").mkdir(exist_ok=True)
+    yield
 
 app = FastAPI(
-     title="Research Alignment Agent — Team A",
-     version="1.0.0",
-     lifespan=lifespan,
+    title="Research Alignment Agent — Team A",
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
-     CORSMiddleware,
-     allow_origins=["*"],
-     allow_methods=["*"],
-     allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.get("/health")
 async def health():
-     return {"status": "ok"}
+    return {"status": "ok"}
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
-     file: UploadFile = File(...),
-     source_type: str = Form(...),
+    file: UploadFile = File(...),
+    source_type: str = Form(...),
 ):
-     if source_type not in ("draft", "paper"):
-         raise HTTPException(400, "source_type must be 'draft' or 'paper'")
+    if source_type not in ("draft", "paper"):
+        raise HTTPException(400, "source_type must be 'draft' or 'paper'")
 
-     if not validate_extension(file.filename):
-         raise HTTPException(415, "Unsupported file type")
+    if not validate_extension(file.filename):
+        raise HTTPException(415, "Unsupported file type")
 
-     tmp_path = await save_upload(file)
+    tmp_path = await save_upload(file)
 
-     try:
-         print("\n=== [1/2] STARTING SUMMARIZATION ===")
-         summaries = await run_pipeline(str(tmp_path))
-         print("=== [1/2] SUMMARIZATION COMPLETE ===\n")
-     except Exception as e:
-         cleanup(tmp_path)
-         raise HTTPException(500, f"Summarization failed: {str(e)}")
-     finally:
-         cleanup(tmp_path)
+    try:
+        print("\n=== [1/2] STARTING SUMMARIZATION ===")
+        summaries = await run_pipeline(str(tmp_path))
+        print("=== [1/2] SUMMARIZATION COMPLETE ===\n")
+    except Exception as e:
+        cleanup(tmp_path)
+        raise HTTPException(500, f"Summarization failed: {str(e)}")
+    finally:
+        cleanup(tmp_path)
 
-     doc = ParsedDocument(
-         filename=file.filename,
-         source_type=source_type,
-         sections=summaries,
-         total_sections=len(summaries),
-         status="success",
-     )
+    doc = ParsedDocument(
+        filename=file.filename,
+        source_type=source_type,
+        sections=summaries,
+        total_sections=len(summaries),
+        status="success",
+    )
 
-     print("=== [2/2] STARTING CHROMADB INGESTION ===")
-     try:
-         await asyncio.to_thread(store_document_in_chroma, doc)
-         print("=== [2/2] CHROMADB INGESTION COMPLETE ===\n")
-     except Exception as e:
-         raise HTTPException(500, f"Failed to store in ChromaDB: {str(e)}")
+    print("=== [2/2] STARTING CHROMADB INGESTION ===")
+    try:
+        await store_document_in_chroma(doc)
+        print("=== [2/2] CHROMADB INGESTION COMPLETE ===\n")
+    except Exception as e:
+        raise HTTPException(500, f"Failed to store in ChromaDB: {str(e)}")
 
-     return UploadResponse(
-         doc_id=doc.doc_id,
-         filename=doc.filename,
-         source_type=doc.source_type,
-         version_id=doc.version_id,
-         total_sections=doc.total_sections,
-         sections=doc.sections,
-         message="Processed and stored successfully",
-     )
+    return UploadResponse(
+        doc_id=doc.doc_id,
+        filename=doc.filename,
+        source_type=doc.source_type,
+        version_id=doc.version_id,
+        total_sections=doc.total_sections,
+        sections=doc.sections,
+        message="Processed and stored successfully",
+    )
