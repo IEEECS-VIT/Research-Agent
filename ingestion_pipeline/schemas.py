@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from uuid import uuid4
-from datetime import datetime
 
 class SectionSummary(BaseModel):
     section_name: str
@@ -9,9 +8,7 @@ class SectionSummary(BaseModel):
 
 class ParsedDocument(BaseModel):
     doc_id: str = Field(default_factory=lambda: str(uuid4()))
-    version_id: str = Field(
-        default_factory=lambda: datetime.now().strftime("%Y%m%d%H%M%S")
-    )
+    version_id: str = "0"  # PIVOT: Removed datetime, set default to "0"
     filename: str
     source_type: str
     sections: list[SectionSummary]
