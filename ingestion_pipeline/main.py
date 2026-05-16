@@ -1,18 +1,27 @@
 import os
-import asyncio
+import traceback
+
+# [DEBUG-PRO] AGGRESSIVE C++ COLLISION OVERRIDES
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["RAYON_NUM_THREADS"] = "1"
+
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from summarizer import run_pipeline
 from schemas import ParsedDocument, UploadResponse
 from file_utils import save_upload, cleanup, validate_extension
-from chroma_store import store_document_in_chroma
 
-load_dotenv()
+# PIVOT: Removed init_chroma to prevent C++ libraries from loading in the main process
+from chroma_store import store_document_in_chroma 
+
+load_dotenv(override=True)
 
 if not os.getenv("GEMINI_API_KEY"):
     raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env file.")
@@ -21,9 +30,10 @@ if not os.getenv("GEMINI_API_KEY"):
 async def lifespan(app: FastAPI):
     Path("uploads").mkdir(exist_ok=True)
     yield
+    print("Shutting down server.")
 
 app = FastAPI(
-    title="Research Alignment Agent — Team A",
+    title="Research Alignment Agent",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -41,9 +51,12 @@ async def health():
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     source_type: str = Form(...),
 ):
+    print(f"\n--- Processing Upload: {file.filename} ---")
+    
     if source_type not in ("draft", "paper"):
         raise HTTPException(400, "source_type must be 'draft' or 'paper'")
 
@@ -53,12 +66,12 @@ async def upload_document(
     tmp_path = await save_upload(file)
 
     try:
-        print("\n=== [1/2] STARTING SUMMARIZATION ===")
+        print(">> Step 1: Parsing and Summarization")
         summaries = await run_pipeline(str(tmp_path))
-        print("=== [1/2] SUMMARIZATION COMPLETE ===\n")
     except Exception as e:
         cleanup(tmp_path)
-        raise HTTPException(500, f"Summarization failed: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(500, f"Extraction/Summarization failed: {str(e)}")
     finally:
         cleanup(tmp_path)
 
@@ -70,13 +83,14 @@ async def upload_document(
         status="success",
     )
 
-    print("=== [2/2] STARTING CHROMADB INGESTION ===")
     try:
+        print(">> Step 2: Vector Embeddings and ChromaDB Insertion")
         await store_document_in_chroma(doc)
-        print("=== [2/2] CHROMADB INGESTION COMPLETE ===\n")
     except Exception as e:
-        raise HTTPException(500, f"Failed to store in ChromaDB: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(500, f"Failed to store in Vector DB: {str(e)}")
 
+    print(f"--- Successfully processed {file.filename} ---")
     return UploadResponse(
         doc_id=doc.doc_id,
         filename=doc.filename,

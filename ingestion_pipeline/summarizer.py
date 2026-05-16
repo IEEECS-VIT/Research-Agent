@@ -1,130 +1,119 @@
-import asyncio
-import time
 import os
+import json
+import asyncio
+import traceback
 from google import genai
+from google.genai import types
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from docling_parser import extract_sections
 from schemas import SectionSummary
 
-load_dotenv()
+load_dotenv(override=True)
 
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-     raise ValueError("GEMINI_API_KEY not found in .env")
+    raise ValueError("GEMINI_API_KEY not found in .env")
 
 client = genai.Client(api_key=api_key)
+MODEL_NAME = "gemini-2.5-flash-lite"
 
-MODEL_NAME = "gemini-1.5-flash-8b"
+# We use a Pydantic schema to force the LLM to output a clean, parsable JSON array
+class GeneratedSummary(BaseModel):
+    section_name: str
+    summary: str
 
-SYSTEM_PROMPT = """You are a research paper analyst.
-Summarise the section clearly and concisely in 3-6 sentences.
-Preserve key claims, methods, and numbers exactly as stated.
-Output plain text only — no bullet points, no headers."""
+class BatchSummaryResponse(BaseModel):
+    summaries: list[GeneratedSummary]
 
-SECTION_HINTS = {
-     "abstract":                    "Capture the problem, method, and main result.",
-     "introduction":                "Capture the motivation, research gap, and stated contribution.",
-     "related_work":                "Capture key prior works and how this paper differs.",
-     "background":                  "Capture key concepts and definitions introduced.",
-     "methodology":                 "Capture the experimental design, datasets, and approach.",
-     "data_processing_pipelines":   "Capture the data ingestion and preprocessing steps.",
-     "graphbased_cybersecurity_models": "Capture how RDF/knowledge graphs are structured.",
-     "graph_based_cybersecurity_models": "Capture how RDF/knowledge graphs are structured.",
-     "structuring_security_event_logs_in_rdf_triple_stores": "Capture the RDF structuring process.",
-     "converting_data_to_rdf_knowledge_graph": "Capture the RDF triple generation steps.",
-     "handling_and_identification_of_pii_in_rdf_knowledge_graphs": "Capture the PII detection and anonymisation approach.",
-     "sparql_query":                "Capture what this query does and what it returns.",
-     "results":                     "Capture specific numerical results and comparisons.",
-     "preliminary_evaluation":      "Capture evaluation method, metrics, and key scores.",
-     "discussion":                  "Capture interpretations, limitations, and implications.",
-     "discussion_and_conclusions":  "Capture main takeaways, limitations, and future work.",
-     "conclusion":                  "Capture main takeaways and future directions.",
-}
+SYSTEM_PROMPT = """You are a highly capable research paper analyst. 
+You will be provided with a JSON array containing sections of a document.
+For EACH section, read the text and generate a concise 3-5 sentence summary.
+Preserve key claims, methodologies, and exact numbers.
+Return your output STRICTLY matching the requested JSON schema."""
 
-SKIP_SECTIONS = {
-     "references", "acknowledgement", "acknowledgements",
-     "json_logs_from_network_security_groups",
-     "txt_firewall_logs",
-     "csv_email_security_logs",
-}
+async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]:
+    print(f"[SUMMARIZER] Preparing Single-Shot Batch prompt for {len(sections)} sections...")
+    
+    # Prepare the payload mapping
+    payload_data = []
+    for sec in sections:
+        text_snippet = sec["raw_text"][:8000] 
+        payload_data.append({
+            "section_name": sec["section_name"],
+            "text": text_snippet
+        })
 
-MAX_INPUT_CHARS = 6000
-INTER_REQUEST_DELAY = 2
+    prompt_content = f"{SYSTEM_PROMPT}\n\nDocument Sections Data:\n{json.dumps(payload_data)}"
+    
+    max_retries = 4
+    # PIVOT: Started delay at 45s to safely clear Google's ~33s Free Tier timeout lock
+    delay = 45 
 
-def build_prompt(section_name: str, text: str) -> str:
-     hint = SECTION_HINTS.get(section_name.lower(), "Summarise the key points of this section.")
-     return (
-         f"{SYSTEM_PROMPT}\n\n"
-         f"Section: {section_name.replace('_', ' ').title()}\n"
-         f"Focus: {hint}\n\n"
-         f"---\n{text[:MAX_INPUT_CHARS]}\n---\n\n"
-         f"Write the summary now:"
-     )
+    for attempt in range(max_retries):
+        try:
+            print(f"[SUMMARIZER] Executing API Call (Attempt {attempt + 1}/{max_retries}) using {MODEL_NAME}...")
+            response = await client.aio.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt_content,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=BatchSummaryResponse,
+                    temperature=0.2,
+                )
+            )
+            
+            # Parse the structured response
+            response_json = json.loads(response.text)
+            generated_summaries = response_json.get("summaries", [])
+            
+            # Create a lookup dictionary from the LLM output
+            summary_lookup = {item["section_name"]: item["summary"] for item in generated_summaries}
+            
+            # Reconstruct the final list combining raw text and new summaries
+            final_results = []
+            for sec in sections:
+                name = sec["section_name"]
+                summary_text = summary_lookup.get(name, "[Summary Generation Failed]")
+                
+                final_results.append(SectionSummary(
+                    section_name=name,
+                    raw_text=sec["raw_text"],
+                    summary=summary_text
+                ))
+                
+            print(f"[SUMMARIZER] Single-Shot Generation Complete! Extracted {len(final_results)} summaries.")
+            return final_results
+            
+        except Exception as e:
+            err_str = str(e).lower()
+            print(f"[SUMMARIZER] API Error on attempt {attempt + 1}: {type(e).__name__} - {e}")
+            
+            if "quota" in err_str or "429" in err_str or "exhausted" in err_str:
+                if attempt < max_retries - 1:
+                    print(f"[SUMMARIZER] -> Rate limit hit. Google API is in timeout. Waiting {delay} seconds before retry...")
+                    await asyncio.sleep(delay)
+                    delay += 15 # Increment delay slightly for subsequent retries just in case
+                else:
+                    print(f"[SUMMARIZER] -> FATAL: Max retries exceeded.")
+                    raise RuntimeError(f"Max retries exceeded due to rate limits. Please check your API quota.") from e
+            else:
+                # If it's a parsing error or a non-429 error from Google, fail loudly
+                traceback.print_exc()
+                raise
 
-async def _call_with_retry(prompt: str, max_retries: int = 4) -> str:
-     delay = 15
-     for attempt in range(max_retries):
-         try:
-             response = await client.aio.models.generate_content(
-                 model=MODEL_NAME,
-                 contents=prompt
-             )
-             return response.text.strip()
-         except Exception as e:
-             err = str(e).lower()
-             if "quota" in err or "429" in err or "exhausted" in err:
-                 if attempt < max_retries - 1:
-                     print(f"    Rate limit hit, waiting {delay}s before retry {attempt + 1}...")
-                     await asyncio.sleep(delay)
-                     delay *= 2
-                 else:
-                     raise RuntimeError("Max retries exceeded due to rate limits.") from e
-             else:
-                 raise
-
-async def summarise_section(section_name: str, text: str) -> str:
-     if not text.strip():
-         return "[Empty section]"
-     try:
-         return await _call_with_retry(build_prompt(section_name, text))
-     except Exception as e:
-         return f"[Error: {str(e)}]"
-
-async def summarise_all(sections: list[dict]) -> list[SectionSummary]:
-     results = []
-     total = len(sections)
-
-     for i, sec in enumerate(sections):
-         name = sec["section_name"]
-
-         if name in SKIP_SECTIONS:
-             print(f"  [{i+1}/{total}] Skipping: {name}")
-             results.append(SectionSummary(
-                 section_name=name,
-                 raw_text=sec["raw_text"],
-                 summary=f"[Skipped — {name}]",
-             ))
-             continue
-
-         print(f"  [{i+1}/{total}] Summarising: {name}...")
-         summary = await summarise_section(name, sec["raw_text"])
-         
-         # ✅ FIX: Restored the logic to actually save the summary data
-         results.append(SectionSummary(
-             section_name=name,
-             raw_text=sec["raw_text"],
-             summary=summary,
-         ))
-         
-         print(f"  [{i+1}/{total}] ✅ Done: {name}")
-
-         if i < total - 1:
-             await asyncio.sleep(INTER_REQUEST_DELAY)
-
-     return results
+    return []
 
 async def run_pipeline(file_path: str) -> list[SectionSummary]:
-     sections = extract_sections(file_path)
-     print(f"Extracted {len(sections)} sections. Starting summarisation...")
-     return await summarise_all(sections)
+    try:
+        sections = extract_sections(file_path)
+        if not sections:
+            return []
+            
+        results = await batch_summarise_sections(sections)
+        return results
+    except Exception as e:
+        print(f"[PIPELINE] Pipeline failure: {e}")
+        traceback.print_exc()
+        raise
