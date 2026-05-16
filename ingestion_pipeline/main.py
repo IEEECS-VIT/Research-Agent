@@ -14,12 +14,12 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-from summarizer import run_pipeline
-from schemas import ParsedDocument, UploadResponse
-from file_utils import save_upload, cleanup, validate_extension
+from ingestion_pipeline.summarizer import run_pipeline
+from ingestion_pipeline.schemas import ParsedDocument, UploadResponse
+from ingestion_pipeline.file_utils import save_upload, cleanup, validate_extension
 
 # PIVOT: Removed init_chroma to prevent C++ libraries from loading in the main process
-from chroma_store import store_document_in_chroma 
+from ingestion_pipeline.chroma_store import store_document_in_chroma 
 
 load_dotenv(override=True)
 

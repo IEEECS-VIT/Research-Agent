@@ -3,7 +3,7 @@ import asyncio
 import traceback
 from concurrent.futures import ProcessPoolExecutor
 from google import genai
-from schemas import ParsedDocument
+from ingestion_pipeline.schemas import ParsedDocument
 
 USER_HOME = os.path.expanduser("~")
 CHROMA_DATA_DIR = os.path.join(USER_HOME, ".local_chroma_data_v12")

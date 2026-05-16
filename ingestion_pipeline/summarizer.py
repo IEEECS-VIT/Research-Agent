@@ -7,8 +7,8 @@ from google.genai import types
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from docling_parser import extract_sections
-from schemas import SectionSummary
+from ingestion_pipeline.docling_parser import extract_sections
+from ingestion_pipeline.schemas import SectionSummary
 
 load_dotenv(override=True)
 
