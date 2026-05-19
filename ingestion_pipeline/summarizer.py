@@ -2,12 +2,17 @@ import os
 import json
 import asyncio
 import traceback
+from io import BytesIO
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from ingestion_pipeline.docling_parser import extract_sections
+from ingestion_pipeline.docling_parser import (
+    extract_document_content,
+    inject_image_summaries,
+    split_sections,
+)
 from ingestion_pipeline.schemas import SectionSummary
 
 load_dotenv(override=True)
@@ -18,6 +23,8 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 MODEL_NAME = "gemini-2.5-flash-lite"
+IMAGE_MODEL_NAME = os.getenv("GEMINI_IMAGE_MODEL", MODEL_NAME)
+IMAGE_SUMMARY_FALLBACK = "[Image summary unavailable: vision model quota or access limit reached.]"
 
 # We use a Pydantic schema to force the LLM to output a clean, parsable JSON array
 class GeneratedSummary(BaseModel):
@@ -32,6 +39,70 @@ You will be provided with a JSON array containing sections of a document.
 For EACH section, read the text and generate a concise 3-5 sentence summary.
 Preserve key claims, methodologies, and exact numbers.
 Return your output STRICTLY matching the requested JSON schema."""
+
+IMAGE_SUMMARY_PROMPT = """Summarize this research-paper image for raw-text ingestion.
+Write 2-3 compact academic sentences: more informative than a caption, but not a long analysis.
+Mention visible chart trends, axes, labels, equations, architecture blocks, important numbers, and relationships when legible.
+If the image is decorative or unclear, state the most likely purpose briefly."""
+
+def _pil_image_to_png_bytes(image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+async def summarise_image(image, image_index: int) -> str:
+    max_retries = 2
+    delay = 5
+
+    for attempt in range(max_retries):
+        try:
+            print(
+                f"[IMAGE_SUMMARIZER] Summarizing image {image_index} "
+                f"(Attempt {attempt + 1}/{max_retries}) using {IMAGE_MODEL_NAME}..."
+            )
+            image_bytes = _pil_image_to_png_bytes(image)
+            response = await client.aio.models.generate_content(
+                model=IMAGE_MODEL_NAME,
+                contents=[
+                    IMAGE_SUMMARY_PROMPT,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=220,
+                )
+            )
+
+            summary = (response.text or "").strip()
+            if not summary:
+                raise ValueError("Vision model returned an empty image summary.")
+
+            return f"[Image summary: {summary}]"
+        except Exception as e:
+            print(
+                f"[IMAGE_SUMMARIZER] Image {image_index} failed on attempt {attempt + 1}: "
+                f"{type(e).__name__} - {e}"
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay += 5
+
+    print(
+        f"[IMAGE_SUMMARIZER] Continuing without generated summary for image {image_index}."
+    )
+    return IMAGE_SUMMARY_FALLBACK
+
+async def summarise_images(images: list) -> list[str]:
+    if not images:
+        return []
+
+    summaries = []
+    print(f"[IMAGE_SUMMARIZER] Found {len(images)} extracted images to summarize.")
+    for image_index, image in enumerate(images, start=1):
+        summaries.append(await summarise_image(image, image_index))
+        await asyncio.sleep(1)
+
+    return summaries
 
 async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]:
     print(f"[SUMMARIZER] Preparing Single-Shot Batch prompt for {len(sections)} sections...")
@@ -107,7 +178,10 @@ async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]
 
 async def run_pipeline(file_path: str) -> list[SectionSummary]:
     try:
-        sections = extract_sections(file_path)
+        parsed_content = extract_document_content(file_path)
+        image_summaries = await summarise_images(parsed_content.images)
+        raw_text = inject_image_summaries(parsed_content.full_text, image_summaries)
+        sections = split_sections(raw_text)
         if not sections:
             return []
             
