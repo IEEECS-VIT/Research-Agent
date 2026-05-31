@@ -2,8 +2,11 @@
 .env
 .env.*
 
-# Python bytecode
+# Python bytecode & caching
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 *.py[cod]
 *$py.class
 
@@ -45,6 +48,15 @@ htmlcov/
 *~
 .DS_Store
 Thumbs.db
+
+# Databases & Vector Stores
+graph.db
+*.db
+.local_chroma_data*/
+chroma_data/
+
+# User Uploads
+uploads/
 
 # Python version managers
 .python-version

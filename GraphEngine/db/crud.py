@@ -1,0 +1,172 @@
+# crud.py
+from GraphEngine.db.connection import SessionLocal
+from GraphEngine.db.models import Node, Edge
+
+
+def create_node(node_id, node_type, version_id=1):
+    db = SessionLocal()
+    try:
+        node = Node(
+            node_id=node_id,
+            node_type=node_type,
+            version_id=version_id
+        )
+        db.add(node)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[CRUD] Error creating node: {e}")
+    finally:
+        db.close()
+
+
+def create_edge(data):
+    db = SessionLocal()
+    try:
+        # Ensure backward-compatible flag if not provided
+        if "flag" not in data or not data.get("flag"):
+            from GraphEngine.utils.helpers import map_semantics_to_flag
+            relation = data.get("relation_type")
+            confidence_state = data.get("confidence_state")
+            data["flag"] = map_semantics_to_flag(relation, confidence_state)
+
+        # Normalize semantic dimensions from legacy inputs when possible.
+        if not data.get("relation_type") or not data.get("confidence_state") or not data.get("verifier_state"):
+            from GraphEngine.utils.helpers import infer_semantic_dimensions
+            inferred = infer_semantic_dimensions(
+                flag=data.get("flag"),
+                confidence=data.get("confidence"),
+                verifier_status=data.get("verifier_status"),
+            )
+            if not data.get("relation_type"):
+                data["relation_type"] = inferred.get("relation_type")
+            if not data.get("confidence_state"):
+                data["confidence_state"] = inferred.get("confidence_state")
+            if not data.get("verifier_state"):
+                data["verifier_state"] = inferred.get("verifier_state")
+
+        edge = Edge(**data)
+        db.add(edge)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[CRUD] Error creating edge: {e}")
+    finally:
+        db.close()
+
+
+def upsert_edge(source_id: str, target_id: str, edge_data: dict) -> bool:
+    """
+    Create or update an edge between two nodes.
+    
+    Args:
+        source_id: Source node ID (claim ID from source doc).
+        target_id: Target node ID (claim ID from retrieved doc).
+        edge_data: Dict with fields: support_score, contradiction_score, confidence,
+                   verifier_status, flag (optional), user_override (optional).
+    
+    Returns:
+        True if successful, False otherwise.
+    """
+    db = SessionLocal()
+    try:
+        # Check if edge already exists
+        existing = db.query(Edge).filter(
+            Edge.source_id == source_id,
+            Edge.target_id == target_id
+        ).first()
+        
+        if existing:
+            # Update existing edge semantic dimensions
+            existing.support_score = edge_data.get("support_score", existing.support_score)
+            existing.contradiction_score = edge_data.get("contradiction_score", existing.contradiction_score)
+            existing.confidence = edge_data.get("confidence", existing.confidence)
+
+            # New semantic fields
+            if not edge_data.get("relation_type") or not edge_data.get("confidence_state") or not edge_data.get("verifier_state"):
+                from GraphEngine.utils.helpers import infer_semantic_dimensions
+                inferred = infer_semantic_dimensions(
+                    flag=edge_data.get("flag"),
+                    confidence=edge_data.get("confidence", existing.confidence),
+                    verifier_status=edge_data.get("verifier_status", existing.verifier_status),
+                )
+            else:
+                inferred = {}
+
+            existing.relation_type = edge_data.get("relation_type") or inferred.get("relation_type") or existing.relation_type
+            existing.confidence_state = edge_data.get("confidence_state") or inferred.get("confidence_state") or existing.confidence_state
+            existing.verifier_state = edge_data.get("verifier_state") or inferred.get("verifier_state") or existing.verifier_state
+
+            # Keep old verifier_status for compatibility
+            existing.verifier_status = edge_data.get("verifier_status", existing.verifier_status)
+
+            # Maintain backward-compatible flag if provided or synthesize
+            if edge_data.get("flag"):
+                existing.flag = edge_data.get("flag")
+            else:
+                from GraphEngine.utils.helpers import map_semantics_to_flag
+                existing.flag = map_semantics_to_flag(existing.relation_type, existing.confidence_state)
+
+            # Don't override user_override unless explicitly set
+            if "user_override" in edge_data:
+                existing.user_override = edge_data.get("user_override")
+
+            db.commit()
+        else:
+            # Create new edge
+            # Synthesize flag if not present
+            if not edge_data.get("flag"):
+                from GraphEngine.utils.helpers import map_semantics_to_flag
+                edge_data["flag"] = map_semantics_to_flag(edge_data.get("relation_type"), edge_data.get("confidence_state"))
+
+            if not edge_data.get("relation_type") or not edge_data.get("confidence_state") or not edge_data.get("verifier_state"):
+                from GraphEngine.utils.helpers import infer_semantic_dimensions
+                inferred = infer_semantic_dimensions(
+                    flag=edge_data.get("flag"),
+                    confidence=edge_data.get("confidence"),
+                    verifier_status=edge_data.get("verifier_status"),
+                )
+                if not edge_data.get("relation_type"):
+                    edge_data["relation_type"] = inferred.get("relation_type")
+                if not edge_data.get("confidence_state"):
+                    edge_data["confidence_state"] = inferred.get("confidence_state")
+                if not edge_data.get("verifier_state"):
+                    edge_data["verifier_state"] = inferred.get("verifier_state")
+
+            edge = Edge(
+                source_id=source_id,
+                target_id=target_id,
+                support_score=edge_data.get("support_score", 0.0),
+                contradiction_score=edge_data.get("contradiction_score", 0.0),
+                confidence=edge_data.get("confidence", 0.0),
+
+                relation_type=edge_data.get("relation_type"),
+                confidence_state=edge_data.get("confidence_state"),
+                verifier_state=edge_data.get("verifier_state"),
+
+                verifier_status=edge_data.get("verifier_status", "CONFIRMED"),
+                flag=edge_data.get("flag", None),
+                user_override=edge_data.get("user_override", False),
+            )
+            db.add(edge)
+            db.commit()
+        
+        return True
+    except Exception as e:
+        db.rollback()
+        print(f"[CRUD] Error upserting edge: {e}")
+        return False
+    finally:
+        db.close()
+
+
+def get_edges():
+    db = SessionLocal()
+    try:
+        edges = db.query(Edge).all()
+        return edges
+    except Exception as e:
+        print(f"[CRUD] Error retrieving edges: {e}")
+        return []
+    finally:
+        db.close()
