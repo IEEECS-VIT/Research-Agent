@@ -3,10 +3,8 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
-/ingestion_pipeline/chroma_data/
-/ingestion_pipeline/__pycache__/
-/ingestion_pipeline/test_models.py
-venv/
-__pycache__/
-*.pyc
-.env
+*.db
+uploads/
+node_modules/
+dist/
+frontend/dist/
