@@ -4,7 +4,10 @@ __pycache__/
 *.pyc
 .DS_Store
 *.db
+*.db-shm
+*.db-wal
 uploads/
+frontend/.vite/
 node_modules/
 dist/
 frontend/dist/
