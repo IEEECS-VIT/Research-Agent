@@ -1,5 +1,5 @@
 # relation_engine.py
-from GraphEngine.db.crud import get_edges
+from GraphEngine.db.crud import get_edge_direct
 
 
 def infer_relation(p1: str, p2: str) -> dict:
@@ -17,17 +17,9 @@ def infer_relation(p1: str, p2: str) -> dict:
             flag      – edge flag if found, else None
             confidence – edge confidence if found, else None
     """
-    edges = get_edges()
-
-    # Look for a direct edge between p1 and p2 in either direction.
-    direct = next(
-        (
-            e for e in edges
-            if (e.source_id == p1 and e.target_id == p2)
-            or (e.source_id == p2 and e.target_id == p1)
-        ),
-        None,
-    )
+    # Targeted SQLite WHERE query — O(1) indexed lookup instead of full
+    # table scan + Python iteration over all edges.
+    direct = get_edge_direct(p1, p2)
 
     if not direct:
         return {"relation": "unknown", "flag": None, "confidence": None}
@@ -45,4 +37,4 @@ def infer_relation(p1: str, p2: str) -> dict:
         "relation": relation,
         "flag": flag,
         "confidence": direct.confidence,
-    }
+    }

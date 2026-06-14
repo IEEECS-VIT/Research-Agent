@@ -3,14 +3,16 @@ import json
 import asyncio
 import random
 import traceback
-from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
 from ingestion_pipeline.docling_parser import extract_sections
 from ingestion_pipeline.schemas import SectionSummary
-from GraphEngine.utils.gemini_client import is_retryable_gemini_error
+from GraphEngine.utils.gemini_client import (
+    is_retryable_gemini_error,
+    _get_client,
+)
 
 load_dotenv(override=True)
 
@@ -53,77 +55,110 @@ def _fallback_summary(text_snippet: str) -> str:
     return summary[:600]
 
 async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]:
-    print(f"[SUMMARIZER] Preparing per-section summarization for {len(sections)} sections...")
+    print(f"[SUMMARIZER] Preparing concurrent summarization for {len(sections)} sections...")
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set. Set the environment variable or .env entry.")
-
-    client = genai.Client(api_key=api_key)
+    client = _get_client()
 
     max_retries = 5
     base_delay = 3
-    final_results: list[SectionSummary] = []
 
-    # Summarize each section independently to avoid token limits and parsing fragility
-    for sec in sections:
+    # Limit concurrent summarization calls to avoid quota exhaustion.
+    # Tune via SUMMARIZE_MAX_CONCURRENT env var (default 5).
+    max_concurrent = int(os.getenv("SUMMARIZE_MAX_CONCURRENT", "5"))
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def _summarise_one(sec: dict, idx: int) -> tuple[int, SectionSummary]:
+        """Summarize a single section with retries. Returns (original_index, result)."""
         text_snippet = sec["raw_text"][:8000]
-        prompt_content = f"{SYSTEM_PROMPT}\n\nSection:\n{json.dumps({'section_name': sec['section_name'], 'text': text_snippet})}"
-
+        prompt_content = (
+            f"{SYSTEM_PROMPT}\n\nSection:\n"
+            f"{json.dumps({'section_name': sec['section_name'], 'text': text_snippet})}"
+        )
         summary_text = _fallback_summary(text_snippet)
 
-        for attempt in range(max_retries):
-            try:
-                print(f"[SUMMARIZER] Section `{sec['section_name']}` call (attempt {attempt+1})")
-                response = await client.aio.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=prompt_content,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=GeneratedSummary,
-                        temperature=0.2,
-                    )
-                )
-
-                # Defensive parse
+        async with sem:
+            for attempt in range(max_retries):
                 try:
-                    response_json = json.loads(response.text)
-                    summary_text = response_json.get("summary") or response_json.get("text") or "[Summary Missing]"
-                except Exception:
-                    # If structured parse fails, fall back to raw text
-                    summary_text = response.text or "[Summary Missing]"
+                    print(
+                        f"[SUMMARIZER] Section `{sec['section_name']}` call "
+                        f"(attempt {attempt + 1})"
+                    )
+                    response = await client.aio.models.generate_content(
+                        model=MODEL_NAME,
+                        contents=prompt_content,
+                        config=types.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=GeneratedSummary,
+                            temperature=0.2,
+                        ),
+                    )
 
-                break
-            except Exception as e:
-                print(f"[SUMMARIZER] Error summarizing section `{sec['section_name']}`: {e}")
-                if is_retryable_gemini_error(e) and attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                    await asyncio.sleep(delay)
-                    continue
+                    # Defensive parse
+                    try:
+                        response_json = json.loads(response.text)
+                        summary_text = (
+                            response_json.get("summary")
+                            or response_json.get("text")
+                            or "[Summary Missing]"
+                        )
+                    except Exception:
+                        summary_text = response.text or "[Summary Missing]"
 
-                if not is_retryable_gemini_error(e):
-                    traceback.print_exc()
-                    raise
+                    break
 
-                print(
-                    f"[SUMMARIZER] Falling back to extractive summary for section `{sec['section_name']}` after repeated Gemini errors"
-                )
-                break
+                except Exception as e:
+                    print(
+                        f"[SUMMARIZER] Error summarizing section "
+                        f"`{sec['section_name']}`: {e}"
+                    )
+                    if is_retryable_gemini_error(e) and attempt < max_retries - 1:
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        await asyncio.sleep(delay)
+                        continue
 
-        final_results.append(SectionSummary(section_name=sec["section_name"], raw_text=sec["raw_text"], summary=summary_text))
+                    if not is_retryable_gemini_error(e):
+                        traceback.print_exc()
+                        raise
+
+                    print(
+                        f"[SUMMARIZER] Falling back to extractive summary for "
+                        f"section `{sec['section_name']}` after repeated Gemini errors"
+                    )
+                    break
+
+        return idx, SectionSummary(
+            section_name=sec["section_name"],
+            raw_text=sec["raw_text"],
+            summary=summary_text,
+        )
+
+    # Fire all section summarizations concurrently; gather preserves insertion order
+    # but we use explicit index tuples to guarantee deterministic output ordering.
+    indexed_results = await asyncio.gather(
+        *[_summarise_one(sec, i) for i, sec in enumerate(sections)]
+    )
+
+    # Sort by original index so the section order matches the document structure.
+    final_results = [result for _, result in sorted(indexed_results, key=lambda t: t[0])]
 
     print(f"[SUMMARIZER] Completed summarization for {len(final_results)} sections.")
     return final_results
 
+
 async def run_pipeline(file_path: str) -> list[SectionSummary]:
     try:
-        sections = extract_sections(file_path)
+        # extract_sections() calls docling's converter.convert() which is a
+        # blocking CPU/IO-bound operation (PDF parsing). Run it in a thread-pool
+        # executor so it does not stall the FastAPI async event loop.
+        loop = asyncio.get_running_loop()
+        sections = await loop.run_in_executor(None, extract_sections, file_path)
+
         if not sections:
             return []
-            
+
         results = await batch_summarise_sections(sections)
         return results
     except Exception as e:
         print(f"[PIPELINE] Pipeline failure: {e}")
         traceback.print_exc()
-        raise
+        raise

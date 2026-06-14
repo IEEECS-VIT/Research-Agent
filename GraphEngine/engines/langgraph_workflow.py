@@ -8,7 +8,7 @@ from GraphEngine.engines.comparison_engine import (
     compare_claim_against_candidates,
 )
 from GraphEngine.engines.retrieval_engine import retrieve_by_claim_embedding
-from GraphEngine.db.crud import upsert_edge
+from GraphEngine.db.crud import bulk_upsert_edges
 from GraphEngine.utils.helpers import (
     derive_relation_type,
     derive_confidence_state,
@@ -54,7 +54,7 @@ async def _compare_single_claim(claim: dict, source_doc_type: str, version_id: s
         candidate_count = len(retrieved.get("documents", [[]])[0] or [])
         print(
             f"[LANGGRAPH-WORKFLOW] Scoring claim {claim_id}: "
-            f"{candidate_count} candidates x 2 LLM calls (Analyst + Verifier)..."
+            f"{candidate_count} candidates x 1 LLM call (unified evaluator)..."
         )
 
         # 3. Scoring & verification (async)
@@ -108,43 +108,50 @@ async def run_langgraph_workflow(claims: List[dict], source_doc_type: str, versi
 
     # Compute flags and persist edges only after whole workflow completes
     if persist and comparison_results:
-        edge_count = 0
+        # ── Build the full edge record list in memory (pure Python, no I/O) ──
+        edge_records: list[tuple[str, str, dict]] = []
         for result in comparison_results:
             for match in result.matches:
-                source_claim_id = f"{result.claim_id}" if result.claim_id else "unknown"
-                # Preserve doc-level prefixing in upload flow: callers should prefix
-                # with source doc id if needed. Here we store without modification.
+                source_claim_id = result.claim_id or "unknown"
                 target_claim_id = match.get("retrieved_id", "")
 
                 support = match.get("support_score", 0.0)
                 contradict = match.get("contradiction_score", 0.0)
                 confidence = match.get("confidence", 0.0)
 
-                # Determine semantic dimensions
                 relation = derive_relation_type(support, contradict)
                 verifier_state = derive_verifier_state(match.get("verifier_status"))
-                confidence_state = derive_confidence_state(confidence, match.get("verifier_status"), LOW_CONF_THRESHOLD)
-
-                # Synthesize legacy flag for backward compatibility
+                confidence_state = derive_confidence_state(
+                    confidence, match.get("verifier_status"), LOW_CONF_THRESHOLD
+                )
                 legacy_flag = map_semantics_to_flag(relation, confidence_state)
 
-                edge_data = {
-                    "support_score": support,
-                    "contradiction_score": contradict,
-                    "confidence": confidence,
-                    "verifier_status": match.get("verifier_status", "CONFIRMED"),
+                edge_records.append((
+                    source_claim_id,
+                    target_claim_id,
+                    {
+                        "support_score": support,
+                        "contradiction_score": contradict,
+                        "confidence": confidence,
+                        "verifier_status": match.get("verifier_status", "CONFIRMED"),
+                        "relation_type": relation,
+                        "confidence_state": confidence_state,
+                        "verifier_state": verifier_state,
+                        "flag": legacy_flag,
+                        "user_override": False,
+                    },
+                ))
 
-                    "relation_type": relation,
-                    "confidence_state": confidence_state,
-                    "verifier_state": verifier_state,
-
-                    "flag": legacy_flag,
-                    "user_override": False,
-                }
-
-                if upsert_edge(source_claim_id, target_claim_id, edge_data):
-                    edge_count += 1
-
-        print(f"[LANGGRAPH-WORKFLOW] Persisted {edge_count} edges after workflow completion.")
+        # ── Single bulk DB write off the event loop via run_in_executor ──
+        # bulk_upsert_edges opens ONE session and commits ALL edges in ONE
+        # transaction instead of N separate round-trips.
+        if edge_records:
+            loop = asyncio.get_running_loop()
+            edge_count = await loop.run_in_executor(
+                None,
+                bulk_upsert_edges,
+                edge_records,
+            )
+            print(f"[LANGGRAPH-WORKFLOW] Persisted {edge_count}/{len(edge_records)} edges in one transaction.")
 
     return comparison_results

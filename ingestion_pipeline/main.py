@@ -25,11 +25,13 @@ from ingestion_pipeline.chroma_store import store_document_in_chroma
 from ingestion_pipeline.claim_extractor import extract_claims_from_section
 from GraphEngine.engines.comparison_engine import compare_document
 from GraphEngine.engines.langgraph_workflow import run_langgraph_workflow
-from GraphEngine.db.crud import get_edges
+from GraphEngine.db.crud import get_edges, bulk_upsert_edges
 from GraphEngine.db.connection import engine
 from GraphEngine.db.models import Base
 from GraphEngine.analytics.graph_builder import build_graph_from_sqlite
 from GraphEngine.analytics.graph_summary import graph_summary
+from GraphEngine.analytics.inference_engine import infer_paper_paper_support_edges
+import asyncio
 
 load_dotenv(override=True)
 
@@ -154,6 +156,48 @@ async def get_graph_summary():
     """Return a lightweight summary of the reconstructed in-memory graph."""
     graph = build_graph_from_sqlite()
     return graph_summary(graph)
+
+
+@app.post(
+    "/graph/infer-transitive-edges",
+    summary="Infer implicit Paper-Paper SUPPORT edges through shared Draft intermediaries",
+)
+async def infer_transitive_edges():
+    """Discover Paper-to-Paper SUPPORT relationships without any LLM calls.
+
+    How it works:
+      If Paper A and Paper B both SUPPORT the same Draft claim with high
+      confidence, we infer that Paper A and Paper B also implicitly agree.
+
+    Quality gates (to prevent naive edge forming):
+      - Both bridge edges must be SUPPORT + CONFIRMED + HIGH_CONFIDENCE
+      - Both bridge edges must have support_score >= INFER_MIN_SUPPORT_SCORE (default 0.70)
+      - SCOPE_MISMATCH or LOW_CONFIDENCE edges are NEVER used as bridges
+      - CONTRADICT edges are NEVER inferred (too indirect, too risky)
+
+    Inferred edges are flagged with 'HIGH_CONFIDENCE_SUPPORT_INFERRED'
+    so they are clearly distinguishable from directly computed edges.
+    """
+    loop = asyncio.get_running_loop()
+
+    # Run the pure-Python graph traversal off the event loop
+    inferred_records = await loop.run_in_executor(None, infer_paper_paper_support_edges)
+
+    if not inferred_records:
+        return {
+            "message": "No qualifying bridge edges found. Nothing inferred.",
+            "candidate_pairs": 0,
+            "edges_written": 0,
+        }
+
+    # Bulk-write all inferred edges in a single SQLite transaction
+    edges_written = await loop.run_in_executor(None, bulk_upsert_edges, inferred_records)
+
+    return {
+        "message": "Transitive inference complete.",
+        "candidate_pairs": len(inferred_records),
+        "edges_written": edges_written,
+    }
 
 
 # ==========================================

@@ -22,3 +22,13 @@ CHUNK_TYPE = "summary"   # or "raw_text"
 # ── Scoring ───────────────────────────────────────────────────────────────
 SUPPORT_THRESHOLD = 0.65
 CONTRADICT_THRESHOLD = 0.65
+
+# ── Distance pre-filter ───────────────────────────────────────────────────
+# Candidates with a cosine distance ABOVE this threshold are skipped before
+# any LLM call is made. ChromaDB cosine distance range: 0 (identical) → 2 (opposite).
+# 0.55 ≈ cosine similarity of 0.725 — below this the candidate is very unlikely
+# to be semantically related to the claim.
+# Tune via CANDIDATE_DISTANCE_THRESHOLD env var.
+CANDIDATE_DISTANCE_THRESHOLD = float(
+    os.getenv("CANDIDATE_DISTANCE_THRESHOLD", "0.55")
+)

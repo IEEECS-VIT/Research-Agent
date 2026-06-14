@@ -13,13 +13,12 @@ Flow:
 import os
 import asyncio
 from typing import Any
-from google import genai
+from GraphEngine.utils.gemini_client import _get_client
 
 from GraphEngine.engines.retrieval_engine import retrieve_by_claim_embedding
-from GraphEngine.engines.analyst import analyze
-from GraphEngine.engines.verifier import verify
+from GraphEngine.engines.evaluator import evaluate_async
 from GraphEngine.engines.confidence_engine import compute_confidence
-from GraphEngine.utils.constants import TOP_K, EMBEDDING_DIM, CHUNK_TYPE
+from GraphEngine.utils.constants import TOP_K, EMBEDDING_DIM, CHUNK_TYPE, CANDIDATE_DISTANCE_THRESHOLD
 
 
 class ComparisonResult:
@@ -40,23 +39,26 @@ class ComparisonResult:
         self.matches = matches
 
     def to_dict(self) -> dict:
+        # Strip internal engine flags before serialization so the output
+        # always conforms to the ClaimMatch schema in ingestion_pipeline/schemas.py.
+        _INTERNAL_KEYS = {"skipped_by_distance_filter"}
+        clean_matches = [
+            {k: v for k, v in m.items() if k not in _INTERNAL_KEYS}
+            for m in self.matches
+        ]
         return {
             "claim_id": self.claim_id,
             "claim_text": self.claim_text,
             "source_doc_type": self.source_doc_type,
             "version_id": self.version_id,
-            "match_count": len(self.matches),
-            "matches": self.matches,
+            "match_count": len(clean_matches),
+            "matches": clean_matches,
         }
 
 
 async def compute_claim_embedding(claim_text: str) -> list[float]:
-    """Compute a Gemini embedding for a claim."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not set.")
-
-    client = genai.Client(api_key=api_key)
+    """Compute a Gemini embedding for a claim using the shared API client."""
+    client = _get_client()  # shared client — no new HTTP session per claim
     max_retries = 3
     delay = 1
 
@@ -135,60 +137,84 @@ async def compare_claim_against_candidates(
     distances = retrieved_results["distances"][0]
     ids = retrieved_results["ids"][0]
 
-    llm_gap = float(os.getenv("GEMINI_MATCH_DELAY_SEC", "0.15"))
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()  # still used by retrieve_by_claim_embedding below
     total_matches = len(documents)
+    print(
+        f"[COMPARISON] Claim {claim_id}: scoring {total_matches} candidates concurrently..."
+    )
 
-    for match_idx, (doc, meta, dist, rid) in enumerate(
-        zip(documents, metadatas, distances, ids), start=1
-    ):
+    # ── Concurrent candidate scoring ──────────────────────────────────────
+    # Each candidate is scored in its own coroutine so all TOP_K candidates
+    # for a given claim are evaluated in parallel instead of sequentially.
+    # A None return signals a scoring failure for that candidate.
+    async def _score_candidate(
+        doc: str, meta: dict, dist: float, rid: str
+    ) -> dict | None:
         try:
-            if match_idx == 1 or match_idx % 5 == 0 or match_idx == total_matches:
-                print(
-                    f"[COMPARISON] Claim {claim_id}: scoring match "
-                    f"{match_idx}/{total_matches}..."
+            # ── Distance pre-filter ────────────────────────────────────────
+            # If the cosine distance is above the threshold the candidate is
+            # too dissimilar to be worth an LLM call. Return a cheap default
+            # record so it is still visible in the graph but clearly flagged.
+            if dist > CANDIDATE_DISTANCE_THRESHOLD:
+                confidence = compute_confidence(
+                    rerank_distance=dist,
+                    analyst_strength=0.5,
+                    verifier_status="SCOPE_MISMATCH",
                 )
+                return {
+                    "retrieved_id": rid,
+                    "retrieved_text": doc[:500],
+                    "metadata": meta,
+                    "cosine_distance": dist,
+                    "support_score": 0.5,
+                    "contradiction_score": 0.5,
+                    "verifier_status": "SCOPE_MISMATCH",
+                    "confidence": confidence,
+                    "skipped_by_distance_filter": True,
+                }
 
-            # Analyst + Verifier run in thread pool so Gemini retries don't freeze the server.
-            analyst_scores = await loop.run_in_executor(
-                None,
-                lambda d=doc, m=meta: analyze(claim_text, d, meta_a=None, meta_b=m),
-            )
-            verifier_status = await loop.run_in_executor(
-                None,
-                lambda d=doc, m=meta: verify(claim_text, d, meta_a=None, meta_b=m),
-            )
-
-            if llm_gap > 0:
-                await asyncio.sleep(llm_gap)
-
-            # Confidence: weighted combination
+            # Native async call — no thread-pool executor needed.
+            evaluation = await evaluate_async(claim_text, doc, meta_a=None, meta_b=meta)
             analyst_strength = max(
-                analyst_scores.get("support_score", 0.0),
-                analyst_scores.get("contradiction_score", 0.0),
+                evaluation.get("support_score", 0.0),
+                evaluation.get("contradiction_score", 0.0),
             )
             confidence = compute_confidence(
                 rerank_distance=dist,
                 analyst_strength=analyst_strength,
-                verifier_status=verifier_status,
+                verifier_status=evaluation["verifier_status"],
             )
-
-            # Build match record
-            match_record = {
+            return {
                 "retrieved_id": rid,
-                "retrieved_text": doc[:500],  # Truncate for storage
+                "retrieved_text": doc[:500],
                 "metadata": meta,
                 "cosine_distance": dist,
-                "support_score": analyst_scores.get("support_score", 0.0),
-                "contradiction_score": analyst_scores.get("contradiction_score", 0.0),
-                "verifier_status": verifier_status,
+                "support_score": evaluation["support_score"],
+                "contradiction_score": evaluation["contradiction_score"],
+                "verifier_status": evaluation["verifier_status"],
                 "confidence": confidence,
+                "skipped_by_distance_filter": False,
             }
-            matches.append(match_record)
+        except Exception as exc:
+            print(f"[COMPARISON] Error scoring candidate {rid}: {exc}")
+            return None
 
-        except Exception as e:
-            print(f"[COMPARISON] Error scoring match {rid}: {e}")
-            continue
+    scored = await asyncio.gather(
+        *[
+            _score_candidate(doc, meta, dist, rid)
+            for doc, meta, dist, rid in zip(documents, metadatas, distances, ids)
+        ]
+    )
+
+    # Filter out failed candidates (None values)
+    matches = [m for m in scored if m is not None]
+    skipped = sum(1 for m in matches if m.get("skipped_by_distance_filter"))
+    llm_scored = len(matches) - skipped
+    print(
+        f"[COMPARISON] Claim {claim_id}: {llm_scored} LLM-scored, "
+        f"{skipped} distance-filtered (threshold={CANDIDATE_DISTANCE_THRESHOLD}), "
+        f"{total_matches - len(matches)} failed."
+    )
 
     return ComparisonResult(
         claim_id=claim_id,
