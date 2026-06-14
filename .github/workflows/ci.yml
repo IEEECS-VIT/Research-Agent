@@ -1,13 +1,32 @@
-name: Basic CI
+name: CI
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main, dev]
+  push:
+    branches: [dev]
 
 jobs:
-  template-check:
+  backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: echo "Customize CI based on project stack"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -c "from app.core.config import get_settings; print('Config OK')"
+      - run: python -c "from app.core.database import Base, engine; print('DB OK')"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run build

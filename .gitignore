@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.db
+uploads/
 *.db-shm
 *.db-wal
 uploads/
