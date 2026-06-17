@@ -161,4 +161,4 @@ async def run_pipeline(file_path: str) -> list[SectionSummary]:
     except Exception as e:
         print(f"[PIPELINE] Pipeline failure: {e}")
         traceback.print_exc()
-        raise
+        raise
