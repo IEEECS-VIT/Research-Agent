@@ -2,7 +2,7 @@ import os
 import asyncio
 import traceback
 from concurrent.futures import ProcessPoolExecutor
-from google import genai
+from GraphEngine.utils.gemini_client import _get_client
 from ingestion_pipeline.schemas import ParsedDocument
 
 USER_HOME = os.path.expanduser("~")
@@ -103,44 +103,69 @@ async def store_document_in_chroma(doc: ParsedDocument):
             print("[VECTOR_STORE] No chunks generated. Skipping.")
             return
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY missing.")
-            
-        client = genai.Client(api_key=api_key)
+        client = _get_client()
         all_embeddings = []
-        
+
         print(f"[VECTOR_STORE] Calling Embeddings API for {len(docs_to_insert)} total chunks...")
-        
-        for i, text in enumerate(docs_to_insert):
-            retries = 3
+
+        # ── Batched concurrent embedding ───────────────────────────────────────
+        # Chunks within each batch are embedded in parallel via asyncio.gather.
+        # Batching prevents overwhelming the API while still being much faster
+        # than purely sequential embedding. Retry logic is preserved per chunk.
+        EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "20"))
+
+        async def _embed_one(text: str, idx: int) -> list[float]:
+            """Embed a single chunk with retries. Returns the embedding vector."""
+            retries = 4
+            delay = 1.0
             for attempt in range(retries):
                 try:
                     response = await client.aio.models.embed_content(
                         model="gemini-embedding-2",
-                        contents=text
+                        contents=text,
                     )
-                    
-                    if not response.embeddings:
-                        raise ValueError("API returned an empty embeddings list.")
-                        
-                    clean_embedding = [float(v) for v in response.embeddings[0].values]
-                    all_embeddings.append(clean_embedding)
-                    break 
-                    
+                    if not getattr(response, "embeddings", None):
+                        raise ValueError(f"Empty embeddings returned for chunk {idx}.")
+                    emb = response.embeddings[0]
+                    vals = getattr(emb, "values", None) or emb
+                    return [float(v) for v in vals]
                 except Exception as e:
-                    if "429" in str(e) or "quota" in str(e).lower():
+                    err = str(e).lower()
+                    print(f"[VECTOR_STORE] Chunk {idx} embed error (attempt {attempt + 1}): {e}")
+                    if any(x in err for x in ("429", "quota", "exhausted")):
                         if attempt < retries - 1:
-                            await asyncio.sleep(2)
-                        else:
-                            raise RuntimeError("Embedding rate limit exceeded.") from e
-                    else:
-                        raise 
-            
-            await asyncio.sleep(0.1)
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+                        raise RuntimeError(f"Embedding rate limit exceeded for chunk {idx}.") from e
+                    raise
+            raise RuntimeError(f"Embedding failed after {retries} retries for chunk {idx}.")
+
+        all_embeddings: list[list[float]] = []
+        total_chunks = len(docs_to_insert)
+
+        for batch_start in range(0, total_chunks, EMBED_BATCH_SIZE):
+            batch_end = min(batch_start + EMBED_BATCH_SIZE, total_chunks)
+            batch = docs_to_insert[batch_start:batch_end]
+            print(
+                f"[VECTOR_STORE] Embedding batch {batch_start // EMBED_BATCH_SIZE + 1}"
+                f"/{-(-total_chunks // EMBED_BATCH_SIZE)}"
+                f" (chunks {batch_start + 1}–{batch_end})..."
+            )
+            batch_embeddings = await asyncio.gather(
+                *[_embed_one(text, batch_start + i) for i, text in enumerate(batch)]
+            )
+            all_embeddings.extend(batch_embeddings)
+
+            # Brief pause between batches to stay within API rate limits.
+            if batch_end < total_chunks:
+                await asyncio.sleep(0.5)
 
         if not (len(docs_to_insert) == len(metadatas) == len(ids) == len(all_embeddings)):
-            raise ValueError("Data mismatch between chunks and embeddings.")
+            raise ValueError(
+                f"Data mismatch: docs={len(docs_to_insert)}, metas={len(metadatas)}, "
+                f"ids={len(ids)}, embeddings={len(all_embeddings)}"
+            )
 
         print("[VECTOR_STORE] Dispatching database write to Isolated Windows Worker Process...")
         
