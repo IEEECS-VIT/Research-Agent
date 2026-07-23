@@ -1,9 +1,8 @@
 import os
 import asyncio
-import traceback
 import logging
 from concurrent.futures import ProcessPoolExecutor
-from google import genai
+from GraphEngine.utils.gemini_client import _get_client
 from ingestion_pipeline.schemas import ParsedDocument
 
 logger = logging.getLogger(__name__)
@@ -11,51 +10,44 @@ logger = logging.getLogger(__name__)
 USER_HOME = os.path.expanduser("~")
 CHROMA_DATA_DIR = os.environ.get("CHROMA_DB_PATH") or os.path.join(USER_HOME, ".local_chroma_data_v12")
 
-# =====================================================================
-# PIVOT: OS-LEVEL PROCESS ISOLATION ZONE
-# This function is executed in a completely separate Windows process.
-# Because it runs separately, ChromaDB's C++ backend never touches the 
-# memory space occupied by Docling, entirely preventing the Segfault.
-# =====================================================================
+
 def isolated_chroma_upsert(db_path, docs, metas, ids, embeddings):
     import chromadb
     from chromadb.config import Settings
-    
+
     class DummyEmbeddingFunction:
         def __call__(self, input):
             return [[0.0] * 3072 for _ in input]
         def name(self):
             return "gemini-dummy"
-            
+
     logger.info("Booting ChromaDB at %s...", db_path)
     try:
         client = chromadb.PersistentClient(
             path=db_path,
             settings=Settings(anonymized_telemetry=False)
         )
-        
+
         collection = client.get_or_create_collection(
             name="research_papers_v12",
             embedding_function=DummyEmbeddingFunction(),
             metadata={"hnsw:space": "cosine"}
         )
-        
-        logger.info("Memory clean. Executing C++ upsert for %d vectors...", len(ids))
+
+        logger.info("Executing C++ upsert for %d vectors...", len(ids))
         collection.upsert(
             documents=docs,
             metadatas=metas,
             ids=ids,
             embeddings=embeddings
         )
-        logger.info("Upsert successful! Self-destructing worker process.")
+        logger.info("Upsert successful!")
         return True
     except Exception as e:
         logger.error("FATAL ERROR: %s", e, exc_info=True)
         raise
 
-# =====================================================================
-# MAIN PIPELINE
-# =====================================================================
+
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
     if not text or not text.strip():
         return []
@@ -67,6 +59,7 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
         chunks.append(text[start:end])
         start += chunk_size - overlap
     return chunks
+
 
 async def store_document_in_chroma(doc: ParsedDocument):
     logger.info("Processing Document ID: %s", doc.doc_id)
@@ -104,48 +97,66 @@ async def store_document_in_chroma(doc: ParsedDocument):
             logger.warning("No chunks generated. Skipping.")
             return
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY missing.")
-            
-        client = genai.Client(api_key=api_key)
-        all_embeddings = []
-        
+        client = _get_client()
+
         logger.info("Calling Embeddings API for %d total chunks...", len(docs_to_insert))
-        
-        for i, text in enumerate(docs_to_insert):
-            retries = 3
+
+        EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "20"))
+
+        async def _embed_one(text: str, idx: int) -> list[float]:
+            retries = 4
+            delay = 1.0
             for attempt in range(retries):
                 try:
                     response = await client.aio.models.embed_content(
                         model="gemini-embedding-2",
-                        contents=text
+                        contents=text,
                     )
-                    
-                    if not response.embeddings:
-                        raise ValueError("API returned an empty embeddings list.")
-                        
-                    clean_embedding = [float(v) for v in response.embeddings[0].values]
-                    all_embeddings.append(clean_embedding)
-                    break 
-                    
+                    if not getattr(response, "embeddings", None):
+                        raise ValueError(f"Empty embeddings returned for chunk {idx}.")
+                    emb = response.embeddings[0]
+                    vals = getattr(emb, "values", None) or emb
+                    return [float(v) for v in vals]
                 except Exception as e:
-                    if "429" in str(e) or "quota" in str(e).lower():
+                    err = str(e).lower()
+                    logger.warning("Chunk %d embed error (attempt %d): %s", idx, attempt + 1, e)
+                    if any(x in err for x in ("429", "quota", "exhausted")):
                         if attempt < retries - 1:
-                            await asyncio.sleep(2)
-                        else:
-                            raise RuntimeError("Embedding rate limit exceeded.") from e
-                    else:
-                        raise 
-            
-            await asyncio.sleep(0.1)
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+                        raise RuntimeError(f"Embedding rate limit exceeded for chunk {idx}.") from e
+                    raise
+            raise RuntimeError(f"Embedding failed after {retries} retries for chunk {idx}.")
+
+        all_embeddings: list[list[float]] = []
+        total_chunks = len(docs_to_insert)
+
+        for batch_start in range(0, total_chunks, EMBED_BATCH_SIZE):
+            batch_end = min(batch_start + EMBED_BATCH_SIZE, total_chunks)
+            batch = docs_to_insert[batch_start:batch_end]
+            logger.info(
+                "Embedding batch %d/%d (chunks %d-%d)...",
+                batch_start // EMBED_BATCH_SIZE + 1,
+                -(-total_chunks // EMBED_BATCH_SIZE),
+                batch_start + 1, batch_end,
+            )
+            batch_embeddings = await asyncio.gather(
+                *[_embed_one(text, batch_start + i) for i, text in enumerate(batch)]
+            )
+            all_embeddings.extend(batch_embeddings)
+
+            if batch_end < total_chunks:
+                await asyncio.sleep(0.5)
 
         if not (len(docs_to_insert) == len(metadatas) == len(ids) == len(all_embeddings)):
-            raise ValueError("Data mismatch between chunks and embeddings.")
+            raise ValueError(
+                f"Data mismatch: docs={len(docs_to_insert)}, metas={len(metadatas)}, "
+                f"ids={len(ids)}, embeddings={len(all_embeddings)}"
+            )
 
         logger.info("Dispatching database write to Isolated Windows Worker Process...")
-        
-        # PIVOT: The magic command that sends the data to the isolated worker process
+
         loop = asyncio.get_running_loop()
         with ProcessPoolExecutor(max_workers=1) as pool:
             await loop.run_in_executor(
@@ -157,9 +168,9 @@ async def store_document_in_chroma(doc: ParsedDocument):
                 ids,
                 all_embeddings
             )
-            
+
         logger.info("Handoff complete. Server process remains perfectly stable.")
-        
+
     except Exception as e:
         logger.error("Failure: %s", e, exc_info=True)
         raise

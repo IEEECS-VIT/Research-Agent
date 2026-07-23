@@ -57,10 +57,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     await rate_limiter(request)
     return await call_next(request)
+
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/api/v1")
@@ -79,7 +81,7 @@ async def root():
 
 @app.get("/metrics")
 async def metrics():
-    import os, platform
+    import platform
     return {
         "service": settings.app_name,
         "version": settings.app_version,
