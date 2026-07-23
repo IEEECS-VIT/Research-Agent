@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from app.core.config import get_settings
 from app.core.database import engine, Base
 from app.core.logging import setup_logging, get_logger
+from app.core.ratelimit import rate_limiter
 from app.api import auth, documents, analysis, health
 
 load_dotenv(override=True)
@@ -55,6 +56,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    await rate_limiter(request)
+    return await call_next(request)
 
 app.include_router(health.router)
 app.include_router(auth.router, prefix="/api/v1")
