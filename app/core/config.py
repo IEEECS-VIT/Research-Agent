@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     chroma_db_path: str = ""
     chroma_collection: str = "research_papers_v12"
 
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     upload_dir: str = "uploads"
     max_upload_size_mb: int = 20

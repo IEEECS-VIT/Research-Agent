@@ -1,12 +1,13 @@
 import os
 import asyncio
 import traceback
+import logging
 from concurrent.futures import ProcessPoolExecutor
 from google import genai
 from ingestion_pipeline.schemas import ParsedDocument
 
 USER_HOME = os.path.expanduser("~")
-CHROMA_DATA_DIR = os.path.join(USER_HOME, ".local_chroma_data_v12")
+CHROMA_DATA_DIR = os.environ.get("CHROMA_DB_PATH") or os.path.join(USER_HOME, ".local_chroma_data_v12")
 
 # =====================================================================
 # PIVOT: OS-LEVEL PROCESS ISOLATION ZONE

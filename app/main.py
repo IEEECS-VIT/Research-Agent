@@ -8,20 +8,23 @@ from dotenv import load_dotenv
 
 from app.core.config import get_settings
 from app.core.database import engine, Base
+from app.core.logging import setup_logging, get_logger
 from app.api import auth, documents, analysis, health
 
 load_dotenv(override=True)
 
 settings = get_settings()
+setup_logging(settings.debug)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
-    print(f"[APP] {settings.app_name} v{settings.app_version} initialized")
+    logger.info("%s v%s initialized", settings.app_name, settings.app_version)
     yield
-    print("[APP] Shutting down")
+    logger.info("Shutting down")
 
 
 app = FastAPI(
