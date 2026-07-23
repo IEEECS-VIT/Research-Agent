@@ -1,5 +1,6 @@
 import os
 import traceback
+import logging
 
 # [DEBUG-PRO] AGGRESSIVE C++ COLLISION OVERRIDES
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -17,7 +18,9 @@ from dotenv import load_dotenv
 from ingestion_pipeline.summarizer import run_pipeline
 from ingestion_pipeline.schemas import ParsedDocument, UploadResponse
 from ingestion_pipeline.file_utils import save_upload, cleanup, validate_extension
-from ingestion_pipeline.chroma_store import store_document_in_chroma 
+from ingestion_pipeline.chroma_store import store_document_in_chroma
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 
@@ -34,7 +37,7 @@ CURRENT_VERSION = 0
 async def lifespan(app: FastAPI):
     Path("uploads").mkdir(exist_ok=True)
     yield
-    print("Shutting down server.")
+    logger.info("Shutting down server.")
 
 app = FastAPI(
     title="Research Alignment Agent",
@@ -75,7 +78,7 @@ async def upload_document(
     file: UploadFile = File(...),
     source_type: str = Form(...),
 ):
-    print(f"\n--- Processing Upload: {file.filename} (Target Version: {CURRENT_VERSION}) ---")
+    logger.info("Processing Upload: %s (Target Version: %d)", file.filename, CURRENT_VERSION)
     
     if source_type not in ("draft", "paper"):
         raise HTTPException(400, "source_type must be 'draft' or 'paper'")
@@ -86,16 +89,15 @@ async def upload_document(
     tmp_path = await save_upload(file)
 
     try:
-        print(">> Step 1: Parsing and Summarization")
+        logger.info("Step 1: Parsing and Summarization")
         summaries = await run_pipeline(str(tmp_path))
     except Exception as e:
         cleanup(tmp_path)
-        traceback.print_exc()
+        logger.error("Extraction/Summarization failed: %s", e, exc_info=True)
         raise HTTPException(500, f"Extraction/Summarization failed: {str(e)}")
     finally:
         cleanup(tmp_path)
 
-    # PIVOT: Injecting the global CURRENT_VERSION into the document payload
     doc = ParsedDocument(
         filename=file.filename,
         source_type=source_type,
@@ -106,13 +108,13 @@ async def upload_document(
     )
 
     try:
-        print(">> Step 2: Vector Embeddings and ChromaDB Insertion")
+        logger.info("Step 2: Vector Embeddings and ChromaDB Insertion")
         await store_document_in_chroma(doc)
     except Exception as e:
-        traceback.print_exc()
+        logger.error("Failed to store in Vector DB: %s", e, exc_info=True)
         raise HTTPException(500, f"Failed to store in Vector DB: {str(e)}")
 
-    print(f"--- Successfully processed {file.filename} ---")
+    logger.info("Successfully processed %s", file.filename)
     return UploadResponse(
         doc_id=doc.doc_id,
         filename=doc.filename,

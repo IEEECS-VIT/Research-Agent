@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import logging
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import PictureItem
 import re
-import traceback
+
+logger = logging.getLogger(__name__)
 
 SKIP_SECTIONS = {"references", "acknowledgement", "acknowledgements"}
 IMAGE_RESOLUTION_SCALE = 2.0
@@ -69,26 +71,25 @@ def _extract_picture_images(result: Any) -> list[Any]:
             if image is not None:
                 images.append(image)
         except Exception as e:
-            print(f"[PARSER] Failed to extract one picture image: {type(e).__name__} - {e}")
+            logger.warning("Failed to extract one picture image: %s - %s", type(e).__name__, e)
 
     return images
 
 def extract_document_content(file_path: str) -> ParsedContent:
-    print(f"[PARSER] Starting Docling conversion for: {file_path}")
+    logger.info("Starting Docling conversion for: %s", file_path)
     try:
         converter = _build_converter(file_path)
         result = converter.convert(file_path)
         full_text = result.document.export_to_markdown()
         images = _extract_picture_images(result)
         
-        print(
-            f"[PARSER] Conversion success. Extracted {len(full_text)} characters "
-            f"and {len(images)} picture images."
+        logger.info(
+            "Conversion success. Extracted %d characters and %d picture images.",
+            len(full_text), len(images)
         )
         return ParsedContent(full_text=full_text, images=images)
     except Exception as e:
-        print(f"[PARSER] Critical failure during extraction: {e}")
-        traceback.print_exc()
+        logger.error("Critical failure during extraction: %s", e, exc_info=True)
         raise
 
 def inject_image_summaries(full_text: str, image_summaries: list[str]) -> str:
@@ -127,12 +128,12 @@ def inject_image_summaries(full_text: str, image_summaries: list[str]) -> str:
     if replaced < len(normalized_summaries):
         remaining = "\n\n".join(normalized_summaries[replaced:])
         updated_text = f"{updated_text.rstrip()}\n\n## Extracted images\n{remaining}"
-        print(
-            "[PARSER] Warning: fewer image placeholders than extracted images. "
-            f"Appended {len(normalized_summaries) - replaced} image summaries."
+        logger.warning(
+            "Fewer image placeholders than extracted images. Appended %d image summaries.",
+            len(normalized_summaries) - replaced
         )
 
-    print(f"[PARSER] Replaced {replaced} Docling image placeholders with summaries.")
+    logger.info("Replaced %d Docling image placeholders with summaries.", replaced)
     return updated_text
 
 def split_sections(full_text: str) -> list[dict]:
@@ -169,6 +170,5 @@ def extract_sections(file_path: str) -> list[dict]:
         content = extract_document_content(file_path)
         return split_sections(content.full_text)
     except Exception as e:
-        print(f"[PARSER] Critical failure during extraction: {e}")
-        traceback.print_exc()
+        logger.error("Critical failure during extraction: %s", e, exc_info=True)
         raise

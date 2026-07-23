@@ -1,12 +1,14 @@
 import os
 import json
 import asyncio
-import traceback
+import logging
 from io import BytesIO
 from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 from ingestion_pipeline.docling_parser import (
     extract_document_content,
@@ -56,9 +58,9 @@ async def summarise_image(image, image_index: int) -> str:
 
     for attempt in range(max_retries):
         try:
-            print(
-                f"[IMAGE_SUMMARIZER] Summarizing image {image_index} "
-                f"(Attempt {attempt + 1}/{max_retries}) using {IMAGE_MODEL_NAME}..."
+            logger.info(
+                "Summarizing image %d (Attempt %d/%d) using %s...",
+                image_index, attempt + 1, max_retries, IMAGE_MODEL_NAME
             )
             image_bytes = _pil_image_to_png_bytes(image)
             response = await client.aio.models.generate_content(
@@ -79,16 +81,16 @@ async def summarise_image(image, image_index: int) -> str:
 
             return f"[Image summary: {summary}]"
         except Exception as e:
-            print(
-                f"[IMAGE_SUMMARIZER] Image {image_index} failed on attempt {attempt + 1}: "
-                f"{type(e).__name__} - {e}"
+            logger.warning(
+                "Image %d failed on attempt %d: %s - %s",
+                image_index, attempt + 1, type(e).__name__, e
             )
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
                 delay += 5
 
-    print(
-        f"[IMAGE_SUMMARIZER] Continuing without generated summary for image {image_index}."
+    logger.warning(
+        "Continuing without generated summary for image %d.", image_index
     )
     return IMAGE_SUMMARY_FALLBACK
 
@@ -97,7 +99,7 @@ async def summarise_images(images: list) -> list[str]:
         return []
 
     summaries = []
-    print(f"[IMAGE_SUMMARIZER] Found {len(images)} extracted images to summarize.")
+    logger.info("Found %d extracted images to summarize.", len(images))
     for image_index, image in enumerate(images, start=1):
         summaries.append(await summarise_image(image, image_index))
         await asyncio.sleep(1)
@@ -105,7 +107,7 @@ async def summarise_images(images: list) -> list[str]:
     return summaries
 
 async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]:
-    print(f"[SUMMARIZER] Preparing Single-Shot Batch prompt for {len(sections)} sections...")
+    logger.info("Preparing Single-Shot Batch prompt for %d sections...", len(sections))
     
     # Prepare the payload mapping
     payload_data = []
@@ -124,7 +126,7 @@ async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]
 
     for attempt in range(max_retries):
         try:
-            print(f"[SUMMARIZER] Executing API Call (Attempt {attempt + 1}/{max_retries}) using {MODEL_NAME}...")
+            logger.info("Executing API Call (Attempt %d/%d) using %s...", attempt + 1, max_retries, MODEL_NAME)
             response = await client.aio.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt_content,
@@ -135,14 +137,11 @@ async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]
                 )
             )
             
-            # Parse the structured response
             response_json = json.loads(response.text)
             generated_summaries = response_json.get("summaries", [])
             
-            # Create a lookup dictionary from the LLM output
             summary_lookup = {item["section_name"]: item["summary"] for item in generated_summaries}
             
-            # Reconstruct the final list combining raw text and new summaries
             final_results = []
             for sec in sections:
                 name = sec["section_name"]
@@ -154,24 +153,23 @@ async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]
                     summary=summary_text
                 ))
                 
-            print(f"[SUMMARIZER] Single-Shot Generation Complete! Extracted {len(final_results)} summaries.")
+            logger.info("Single-Shot Generation Complete! Extracted %d summaries.", len(final_results))
             return final_results
             
         except Exception as e:
             err_str = str(e).lower()
-            print(f"[SUMMARIZER] API Error on attempt {attempt + 1}: {type(e).__name__} - {e}")
+            logger.warning("API Error on attempt %d: %s - %s", attempt + 1, type(e).__name__, e)
             
             if "quota" in err_str or "429" in err_str or "exhausted" in err_str:
                 if attempt < max_retries - 1:
-                    print(f"[SUMMARIZER] -> Rate limit hit. Google API is in timeout. Waiting {delay} seconds before retry...")
+                    logger.warning("Rate limit hit. Google API is in timeout. Waiting %d seconds before retry...", delay)
                     await asyncio.sleep(delay)
-                    delay += 15 # Increment delay slightly for subsequent retries just in case
+                    delay += 15
                 else:
-                    print(f"[SUMMARIZER] -> FATAL: Max retries exceeded.")
+                    logger.error("FATAL: Max retries exceeded.")
                     raise RuntimeError(f"Max retries exceeded due to rate limits. Please check your API quota.") from e
             else:
-                # If it's a parsing error or a non-429 error from Google, fail loudly
-                traceback.print_exc()
+                logger.error("Non-retryable error.", exc_info=True)
                 raise
 
     return []
@@ -188,6 +186,5 @@ async def run_pipeline(file_path: str) -> list[SectionSummary]:
         results = await batch_summarise_sections(sections)
         return results
     except Exception as e:
-        print(f"[PIPELINE] Pipeline failure: {e}")
-        traceback.print_exc()
+        logger.error("Pipeline failure: %s", e, exc_info=True)
         raise

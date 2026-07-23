@@ -6,6 +6,8 @@ from concurrent.futures import ProcessPoolExecutor
 from google import genai
 from ingestion_pipeline.schemas import ParsedDocument
 
+logger = logging.getLogger(__name__)
+
 USER_HOME = os.path.expanduser("~")
 CHROMA_DATA_DIR = os.environ.get("CHROMA_DB_PATH") or os.path.join(USER_HOME, ".local_chroma_data_v12")
 
@@ -25,7 +27,7 @@ def isolated_chroma_upsert(db_path, docs, metas, ids, embeddings):
         def name(self):
             return "gemini-dummy"
             
-    print(f"[ISOLATED WORKER] Booting ChromaDB at {db_path}...")
+    logger.info("Booting ChromaDB at %s...", db_path)
     try:
         client = chromadb.PersistentClient(
             path=db_path,
@@ -38,19 +40,17 @@ def isolated_chroma_upsert(db_path, docs, metas, ids, embeddings):
             metadata={"hnsw:space": "cosine"}
         )
         
-        print(f"[ISOLATED WORKER] Memory clean. Executing C++ upsert for {len(ids)} vectors...")
+        logger.info("Memory clean. Executing C++ upsert for %d vectors...", len(ids))
         collection.upsert(
             documents=docs,
             metadatas=metas,
             ids=ids,
             embeddings=embeddings
         )
-        print("[ISOLATED WORKER] Upsert successful! Self-destructing worker process.")
+        logger.info("Upsert successful! Self-destructing worker process.")
         return True
     except Exception as e:
-        print(f"[ISOLATED WORKER] FATAL ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("FATAL ERROR: %s", e, exc_info=True)
         raise
 
 # =====================================================================
@@ -69,7 +69,7 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
     return chunks
 
 async def store_document_in_chroma(doc: ParsedDocument):
-    print(f"[VECTOR_STORE] Processing Document ID: {doc.doc_id}")
+    logger.info("Processing Document ID: %s", doc.doc_id)
     try:
         docs_to_insert, metadatas, ids = [], [], []
 
@@ -101,7 +101,7 @@ async def store_document_in_chroma(doc: ParsedDocument):
                 ids.append(f"{doc.doc_id}_{section.section_name}_raw_{i}")
 
         if not docs_to_insert:
-            print("[VECTOR_STORE] No chunks generated. Skipping.")
+            logger.warning("No chunks generated. Skipping.")
             return
 
         api_key = os.getenv("GEMINI_API_KEY")
@@ -111,7 +111,7 @@ async def store_document_in_chroma(doc: ParsedDocument):
         client = genai.Client(api_key=api_key)
         all_embeddings = []
         
-        print(f"[VECTOR_STORE] Calling Embeddings API for {len(docs_to_insert)} total chunks...")
+        logger.info("Calling Embeddings API for %d total chunks...", len(docs_to_insert))
         
         for i, text in enumerate(docs_to_insert):
             retries = 3
@@ -143,7 +143,7 @@ async def store_document_in_chroma(doc: ParsedDocument):
         if not (len(docs_to_insert) == len(metadatas) == len(ids) == len(all_embeddings)):
             raise ValueError("Data mismatch between chunks and embeddings.")
 
-        print("[VECTOR_STORE] Dispatching database write to Isolated Windows Worker Process...")
+        logger.info("Dispatching database write to Isolated Windows Worker Process...")
         
         # PIVOT: The magic command that sends the data to the isolated worker process
         loop = asyncio.get_running_loop()
@@ -158,9 +158,8 @@ async def store_document_in_chroma(doc: ParsedDocument):
                 all_embeddings
             )
             
-        print("[VECTOR_STORE] Handoff complete. Server process remains perfectly stable.")
+        logger.info("Handoff complete. Server process remains perfectly stable.")
         
     except Exception as e:
-        print(f"[VECTOR_STORE] Failure: {e}")
-        traceback.print_exc()
+        logger.error("Failure: %s", e, exc_info=True)
         raise

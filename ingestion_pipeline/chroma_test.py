@@ -1,29 +1,31 @@
 import os
 import asyncio
 import sys
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Ensure the root folder is accessible in python path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from ingestion_pipeline.schemas import ParsedDocument, SectionSummary
 from ingestion_pipeline.chroma_store import store_document_in_chroma, CHROMA_DATA_DIR
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
+
 load_dotenv(override=True)
 
 async def test_vector_store():
-    print("==================================================")
-    print("       CHROMADB ISOLATION PIPELINE CHECKER       ")
-    print("==================================================")
-    print(f"Target Database Directory: {CHROMA_DATA_DIR}")
+    logger.info("==================================================")
+    logger.info("       CHROMADB ISOLATION PIPELINE CHECKER       ")
+    logger.info("==================================================")
+    logger.info("Target Database Directory: %s", CHROMA_DATA_DIR)
     
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        print("[ERROR] GEMINI_API_KEY is missing from your .env file!")
+        logger.error("GEMINI_API_KEY is missing from your .env file!")
         return
 
-    # 1. Create mock payload structure conforming to schema
     mock_section = SectionSummary(
         section_name="introduction_test",
         raw_text="This is an automated test chunk verifying Docling and ChromaDB interoperability under Windows 11 execution structures.",
@@ -38,16 +40,15 @@ async def test_vector_store():
         status="testing"
     )
 
-    print("\n[STEP 1] Generating embeddings and running isolated upsert process...")
+    logger.info("\n[STEP 1] Generating embeddings and running isolated upsert process...")
     try:
         await store_document_in_chroma(mock_doc)
-        print("[SUCCESS] Isolated database pipeline write executed completely.")
+        logger.info("[SUCCESS] Isolated database pipeline write executed completely.")
     except Exception as e:
-        print(f"[FAIL] High-level storage pipeline crashed: {e}")
+        logger.error("[FAIL] High-level storage pipeline crashed: %s", e)
         return
 
-    # 2. Querying database directly to ensure validation
-    print("\n[STEP 2] Verifying records inside ChromaDB using independent context...")
+    logger.info("\n[STEP 2] Verifying records inside ChromaDB using independent context...")
     try:
         import chromadb
         from chromadb.config import Settings
@@ -58,26 +59,25 @@ async def test_vector_store():
         )
         
         collections = client.list_collections()
-        print(f"Available Collections: {[col.name for col in collections]}")
+        logger.info("Available Collections: %s", [col.name for col in collections])
         
         collection = client.get_collection(name="research_papers_v12")
         total_items = collection.count()
-        print(f"Total stored records inside target collection: {total_items}")
+        logger.info("Total stored records inside target collection: %d", total_items)
         
         if total_items > 0:
             peek_data = collection.peek(limit=1)
-            print("\n--- Sample Record Retrieved From DB ---")
-            print(f"ID: {peek_data['ids'][0]}")
-            print(f"Document Text Snippet: {peek_data['documents'][0]}")
-            print(f"Metadata Content: {peek_data['metadatas'][0]}")
-            print("---------------------------------------")
-            print("[SUCCESS] ChromaDB is working perfectly and recording your data!")
+            logger.info("\n--- Sample Record Retrieved From DB ---")
+            logger.info("ID: %s", peek_data['ids'][0])
+            logger.info("Document Text Snippet: %s", peek_data['documents'][0])
+            logger.info("Metadata Content: %s", peek_data['metadatas'][0])
+            logger.info("---------------------------------------")
+            logger.info("[SUCCESS] ChromaDB is working perfectly and recording your data!")
         else:
-            print("[WARNING] ChromaDB collection opened successfully but no items were tracked.")
+            logger.warning("[WARNING] ChromaDB collection opened successfully but no items were tracked.")
             
     except Exception as e:
-        print(f"[FAIL] Error attempting to read or readback verification from ChromaDB: {e}")
+        logger.error("[FAIL] Error attempting to read or readback verification from ChromaDB: %s", e)
 
 if __name__ == "__main__":
-    # Windows 11 safe asynchronous event loop execution style
     asyncio.run(test_vector_store())

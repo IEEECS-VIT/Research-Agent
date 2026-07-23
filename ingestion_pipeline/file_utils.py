@@ -1,6 +1,8 @@
+import logging
 import shutil
 from pathlib import Path
-import traceback
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path("uploads")
 
@@ -8,7 +10,7 @@ def validate_extension(filename: str) -> bool:
     try:
         return filename.lower().endswith((".pdf", ".docx", ".html"))
     except Exception as e:
-        print(f"[FILE_UTILS] Error validating extension: {e}")
+        logger.error("Error validating extension: %s", e)
         return False
 
 async def save_upload(file) -> Path:
@@ -19,8 +21,7 @@ async def save_upload(file) -> Path:
             shutil.copyfileobj(file.file, buffer)
         return path
     except Exception as e:
-        print(f"[FILE_UTILS] Error saving upload: {e}")
-        traceback.print_exc()
+        logger.error("Error saving upload: %s", e, exc_info=True)
         raise
 
 def cleanup(path: Path | str):
@@ -28,6 +29,6 @@ def cleanup(path: Path | str):
         file_path = Path(path)
         if file_path.exists():
             file_path.unlink()
-            print(f"[FILE_UTILS] Cleaned up temporary file: {path}")
+            logger.info("Cleaned up temporary file: %s", path)
     except Exception as e:
-        print(f"[FILE_UTILS] Failed to clean up {path}: {e}")
+        logger.warning("Failed to clean up %s: %s", path, e)

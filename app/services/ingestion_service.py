@@ -1,10 +1,11 @@
 import os
-import json
 import asyncio
-import traceback
+import logging
 from pathlib import Path
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 from app.core.config import get_settings
 from app.models.document import Document, ProcessingStatus
 from ingestion_pipeline.summarizer import run_pipeline
@@ -43,7 +44,7 @@ async def process_document(
         try:
             await store_document_in_chroma(doc)
         except Exception as e:
-            print(f"[INGESTION] ChromaDB store failed (non-fatal): {e}")
+            logger.warning("ChromaDB store failed (non-fatal): %s", e)
 
         document.total_sections = len(summaries)
         document.processing_status = ProcessingStatus.COMPLETED.value
@@ -56,5 +57,5 @@ async def process_document(
         document.processing_status = ProcessingStatus.FAILED.value
         document.error_message = str(e)
         db.commit()
-        traceback.print_exc()
+        logger.error("Document processing failed: %s", e, exc_info=True)
         raise
