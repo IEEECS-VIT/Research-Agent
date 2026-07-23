@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from typing import Any
 from sqlalchemy.orm import Session
@@ -116,7 +117,7 @@ async def run_comparison(
     except Exception as e:
         session.status = "failed"
         db.commit()
-        traceback.print_exc()
+        logger.error("Comparison run failed: %s", e, exc_info=True)
         raise
 
 

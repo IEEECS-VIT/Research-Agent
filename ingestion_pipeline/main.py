@@ -27,11 +27,13 @@ load_dotenv(override=True)
 if not os.getenv("GEMINI_API_KEY"):
     raise RuntimeError("GEMINI_API_KEY not set. Add it to your .env file.")
 
-# ==========================================
-# GLOBAL STATE: Tracks the current version
-# Resets to 0 when the server restarts
-# ==========================================
 CURRENT_VERSION = 0
+
+logger.warning(
+    "DEPRECATED: ingestion_pipeline/main.py is the legacy standalone pipeline server. "
+    "Use `uvicorn app.main:app` (the main application server) instead. "
+    "This module will be removed in a future release."
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,7 +42,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down server.")
 
 app = FastAPI(
-    title="Research Alignment Agent",
+    title="Research Alignment Agent (Legacy Pipeline)",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -56,15 +58,8 @@ app.add_middleware(
 async def health():
     return {"status": "ok", "current_active_version": CURRENT_VERSION}
 
-# ==========================================
-# NEW ENDPOINT: Roll to New Version
-# ==========================================
 @app.post("/roll-version", summary="Roll to new version")
 async def roll_version():
-    """
-    Clicking 'Execute' in Swagger UI will increment the global version ID.
-    All subsequent document uploads will use this new version ID.
-    """
     global CURRENT_VERSION
     CURRENT_VERSION += 1
     return {

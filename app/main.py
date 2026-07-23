@@ -1,8 +1,9 @@
 import os
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -33,6 +34,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start
+    logger.debug(
+        "%s %s -> %d (%.2fms)",
+        request.method, request.url.path, response.status_code, elapsed * 1000,
+    )
+    response.headers["X-Response-Time-Ms"] = str(round(elapsed * 1000, 2))
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -53,4 +68,15 @@ async def root():
         "service": settings.app_name,
         "version": settings.app_version,
         "docs": "/docs",
+    }
+
+
+@app.get("/metrics")
+async def metrics():
+    import os, platform
+    return {
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "python_version": platform.python_version(),
+        "debug": settings.debug,
     }
