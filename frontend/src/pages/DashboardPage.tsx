@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Search, BarChart3, Upload, ArrowRight, FileUp, FlaskConical, FileCheck } from 'lucide-react'
+import { FileText, Search, Upload, ArrowRight, FileUp, FlaskConical, FileCheck, Plus } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { documentsApi, analysisApi, type Document, type AnalysisSession } from '../services/api'
+import { EmptyState } from '../components/ui/EmptyState'
+import { StatusBadge } from '../components/ui/StatusBadge'
 
 export function DashboardPage() {
   const { user } = useAuth()
@@ -24,168 +26,201 @@ export function DashboardPage() {
       .finally(() => setLoading(false))
   }, [])
 
+  const firstName = user?.displayName?.split(' ')[0]
+
   const stats = [
     {
       label: 'Documents',
       value: docs.length,
       icon: FileText,
-      color: 'var(--color-primary)',
+      accent: 'var(--color-primary)',
       action: () => navigate('/upload'),
     },
     {
       label: 'Analyses',
       value: sessions.length,
       icon: Search,
-      color: 'var(--color-accent)',
+      accent: 'var(--color-accent)',
       action: () => navigate('/analysis'),
     },
     {
       label: 'Drafts',
       value: docs.filter((d) => d.source_type === 'draft').length,
       icon: FileUp,
-      color: 'var(--color-success)',
+      accent: 'var(--color-warning)',
       action: () => navigate('/upload'),
     },
     {
       label: 'Papers',
       value: docs.filter((d) => d.source_type === 'paper').length,
       icon: FileCheck,
-      color: 'var(--color-warning)',
+      accent: 'var(--color-success)',
       action: () => navigate('/upload'),
     },
   ]
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl font-bold" style={{ color: 'var(--color-text)' }}>
-          Welcome back{user?.displayName ? `, ${user.displayName}` : ''}
+      <div className="mb-8 animate-fade-in">
+        <p className="text-sm font-medium mb-1" style={{ color: 'var(--color-text-muted)' }}>
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+        <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--color-text)' }}>
+          Welcome back{firstName ? `, ${firstName}` : ''} 👋
         </h1>
-        <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-          Manage your research documents and analysis
+        <p className="text-sm mt-1.5" style={{ color: 'var(--color-text-secondary)' }}>
+          Here's an overview of your research workspace
         </p>
       </div>
 
-      <div className="grid grid-cols-4 gap-4 mb-8">
-        {stats.map((s) => (
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {stats.map((s, i) => (
           <button
             key={s.label}
             onClick={s.action}
-            className="p-4 border text-left transition-colors hover:opacity-80"
-            style={{ borderColor: 'var(--color-border)', backgroundColor: 'var(--color-surface)' }}
+            className={`stat-card p-5 text-left animate-fade-in animate-fade-in-delay-${i + 1}`}
+            style={{ '--stat-accent': s.accent } as CSSProperties}
           >
-            <s.icon size={20} style={{ color: s.color }} />
-            <p className="text-2xl font-bold mt-3" style={{ color: 'var(--color-text)' }}>
-              {loading ? '-' : s.value}
+            <div
+              className="w-10 h-10 flex items-center justify-center mb-4 border"
+              style={{ background: `color-mix(in srgb, ${s.accent} 12%, transparent)`, borderColor: 'var(--color-border)' }}
+            >
+              <s.icon size={20} style={{ color: s.accent }} />
+            </div>
+            <p className="text-3xl font-extrabold tracking-tight" style={{ color: 'var(--color-text)' }}>
+              {loading ? (
+                <span className="inline-block w-8 h-8 skeleton" />
+              ) : (
+                s.value
+              )}
             </p>
-            <p className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            <p className="text-sm font-medium mt-1" style={{ color: 'var(--color-text-secondary)' }}>
               {s.label}
             </p>
           </button>
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
-        <div className="border" style={{ borderColor: 'var(--color-border)' }}>
-          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-            <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Recent Documents</h2>
+      <div className="flex gap-3 mb-6 animate-fade-in animate-fade-in-delay-2">
+        <button onClick={() => navigate('/upload')} className="btn btn-primary btn-md">
+          <Plus size={16} />
+          Upload Documents
+        </button>
+        <button onClick={() => navigate('/analysis')} className="btn btn-secondary btn-md">
+          <Search size={16} />
+          New Analysis
+        </button>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <div className="card overflow-hidden animate-fade-in animate-fade-in-delay-3">
+          <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+            <h2 className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Recent Documents</h2>
             <button
               onClick={() => navigate('/upload')}
-              className="flex items-center gap-1 text-xs font-medium transition-colors hover:opacity-70"
+              className="flex items-center gap-1 text-xs font-semibold transition-colors hover:opacity-70"
               style={{ color: 'var(--color-primary)' }}
             >
               View all <ArrowRight size={12} />
             </button>
           </div>
           {loading ? (
-            <div className="p-4 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Loading...</div>
-          ) : docs.length === 0 ? (
-            <div className="p-6 text-center">
-              <Upload size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-secondary)' }} />
-              <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>No documents yet</p>
-              <button
-                onClick={() => navigate('/upload')}
-                className="mt-3 text-xs font-medium px-3 py-1.5 border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-                style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
-              >
-                Upload your first document
-              </button>
+            <div className="p-5 space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="h-12 skeleton" />
+              ))}
             </div>
+          ) : docs.length === 0 ? (
+            <EmptyState
+              icon={Upload}
+              title="No documents yet"
+              description="Upload your first research paper or draft to get started."
+              action={
+                <button onClick={() => navigate('/upload')} className="btn btn-primary btn-sm">
+                  Upload your first document
+                </button>
+              }
+            />
           ) : (
-            <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="divide-y" style={{ borderColor: 'var(--color-border-subtle)' }}>
               {docs.map((doc) => (
-                <div key={doc.id} className="flex items-center gap-3 px-4 py-3">
-                  <FileText size={16} style={{ color: 'var(--color-text-secondary)' }} />
+                <div key={doc.id} className="flex items-center gap-3 px-5 py-3.5 transition-colors hover:bg-[var(--color-surface-hover)]">
+                  <div
+                    className="w-9 h-9 flex items-center justify-center shrink-0 border"
+                    style={{ background: 'var(--color-primary-light)', borderColor: 'var(--color-border)' }}
+                  >
+                    <FileText size={16} style={{ color: 'var(--color-primary)' }} />
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: 'var(--color-text)' }}>
+                    <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text)' }}>
                       {doc.filename}
                     </p>
-                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                      {doc.source_type} &middot; {doc.total_sections} sections &middot; v{doc.version_id}
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                      {doc.source_type} · {doc.total_sections} sections · v{doc.version_id}
                     </p>
                   </div>
-                  <span
-                    className={`text-xs font-medium px-2 py-0.5 ${
-                      doc.processing_status === 'completed'
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : doc.processing_status === 'processing'
-                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                        : doc.processing_status === 'failed'
-                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                        : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
-                    }`}
-                  >
-                    {doc.processing_status}
-                  </span>
+                  <StatusBadge status={doc.processing_status} />
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        <div className="border" style={{ borderColor: 'var(--color-border)' }}>
-          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--color-border)' }}>
-            <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>Recent Analyses</h2>
+        <div className="card overflow-hidden animate-fade-in animate-fade-in-delay-4">
+          <div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+            <h2 className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Recent Analyses</h2>
             <button
               onClick={() => navigate('/analysis')}
-              className="flex items-center gap-1 text-xs font-medium transition-colors hover:opacity-70"
+              className="flex items-center gap-1 text-xs font-semibold transition-colors hover:opacity-70"
               style={{ color: 'var(--color-primary)' }}
             >
               View all <ArrowRight size={12} />
             </button>
           </div>
           {loading ? (
-            <div className="p-4 text-xs" style={{ color: 'var(--color-text-secondary)' }}>Loading...</div>
-          ) : sessions.length === 0 ? (
-            <div className="p-6 text-center">
-              <BarChart3 size={24} className="mx-auto mb-2" style={{ color: 'var(--color-text-secondary)' }} />
-              <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>No analyses yet</p>
-              <button
-                onClick={() => navigate('/upload')}
-                className="mt-3 text-xs font-medium px-3 py-1.5 border transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-                style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
-              >
-                Upload documents to start
-              </button>
+            <div className="p-5 space-y-3">
+              {[1, 2, 3].map((n) => (
+                <div key={n} className="h-12 skeleton" />
+              ))}
             </div>
+          ) : sessions.length === 0 ? (
+            <EmptyState
+              icon={FlaskConical}
+              title="No analyses yet"
+              description="Upload documents and run your first alignment analysis."
+              action={
+                <button onClick={() => navigate('/analysis')} className="btn btn-primary btn-sm">
+                  Start an analysis
+                </button>
+              }
+            />
           ) : (
-            <div className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
+            <div className="divide-y" style={{ borderColor: 'var(--color-border-subtle)' }}>
               {sessions.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => navigate(`/analysis/${s.id}`)}
-                  className="flex items-center gap-3 px-4 py-3 w-full text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                  className="flex items-center gap-3 px-5 py-3.5 w-full text-left transition-colors hover:bg-[var(--color-surface-hover)] group"
                 >
-                  <FlaskConical size={16} style={{ color: 'var(--color-text-secondary)' }} />
+                  <div
+                    className="w-9 h-9 flex items-center justify-center shrink-0 border"
+                    style={{ background: 'var(--color-accent-light)', borderColor: 'var(--color-border)' }}
+                  >
+                    <FlaskConical size={16} style={{ color: 'var(--color-accent)' }} />
+                  </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" style={{ color: 'var(--color-text)' }}>
+                    <p className="text-sm font-semibold truncate" style={{ color: 'var(--color-text)' }}>
                       {s.name || 'Unnamed Analysis'}
                     </p>
-                    <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-                      {new Date(s.created_at).toLocaleDateString()} &middot; {s.status}
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                      {new Date(s.created_at).toLocaleDateString()} · {s.status}
                     </p>
                   </div>
-                  <ArrowRight size={14} style={{ color: 'var(--color-text-secondary)' }} />
+                  <ArrowRight
+                    size={16}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{ color: 'var(--color-primary)' }}
+                  />
                 </button>
               ))}
             </div>
