@@ -1,30 +1,40 @@
 import os
 import json
 import asyncio
-import random
-import traceback
+import logging
+from io import BytesIO
+from google import genai
 from google.genai import types
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from ingestion_pipeline.docling_parser import extract_sections
-from ingestion_pipeline.schemas import SectionSummary
-from GraphEngine.utils.gemini_client import (
-    is_retryable_gemini_error,
-    _get_client,
+logger = logging.getLogger(__name__)
+
+from ingestion_pipeline.docling_parser import (
+    extract_document_content,
+    inject_image_summaries,
+    split_sections,
 )
+from ingestion_pipeline.schemas import SectionSummary
 
 load_dotenv(override=True)
 
-# NOTE: Lazy-create the genai client inside functions to avoid import-time
-# failures when `GEMINI_API_KEY` is not present. This makes the app import
-#able even when the key is missing and surfaces clear errors at request-time.
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("GEMINI_API_KEY not found in .env")
+
+client = genai.Client(api_key=api_key)
 MODEL_NAME = "gemini-2.5-flash-lite"
+IMAGE_MODEL_NAME = os.getenv("GEMINI_IMAGE_MODEL", MODEL_NAME)
+IMAGE_SUMMARY_FALLBACK = "[Image summary unavailable: vision model quota or access limit reached.]"
 
 # We use a Pydantic schema to force the LLM to output a clean, parsable JSON array
 class GeneratedSummary(BaseModel):
     section_name: str
     summary: str
+
+class BatchSummaryResponse(BaseModel):
+    summaries: list[GeneratedSummary]
 
 SYSTEM_PROMPT = """You are a highly capable research paper analyst. 
 You will be provided with a JSON array containing sections of a document.
@@ -32,133 +42,149 @@ For EACH section, read the text and generate a concise 3-5 sentence summary.
 Preserve key claims, methodologies, and exact numbers.
 Return your output STRICTLY matching the requested JSON schema."""
 
+IMAGE_SUMMARY_PROMPT = """Summarize this research-paper image for raw-text ingestion.
+Write 2-3 compact academic sentences: more informative than a caption, but not a long analysis.
+Mention visible chart trends, axes, labels, equations, architecture blocks, important numbers, and relationships when legible.
+If the image is decorative or unclear, state the most likely purpose briefly."""
 
-def _fallback_summary(text_snippet: str) -> str:
-    cleaned_text = " ".join(text_snippet.split())
-    if not cleaned_text:
-        return "[Summary unavailable: empty section text]"
+def _pil_image_to_png_bytes(image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
-    sentences = []
-    for chunk in cleaned_text.replace("?", ".").replace("!", ".").split("."):
-        sentence = chunk.strip()
-        if sentence:
-            sentences.append(sentence)
-        if len(sentences) == 3:
-            break
+async def summarise_image(image, image_index: int) -> str:
+    max_retries = 2
+    delay = 5
 
-    if not sentences:
-        return cleaned_text[:400] + ("..." if len(cleaned_text) > 400 else "")
+    for attempt in range(max_retries):
+        try:
+            logger.info(
+                "Summarizing image %d (Attempt %d/%d) using %s...",
+                image_index, attempt + 1, max_retries, IMAGE_MODEL_NAME
+            )
+            image_bytes = _pil_image_to_png_bytes(image)
+            response = await client.aio.models.generate_content(
+                model=IMAGE_MODEL_NAME,
+                contents=[
+                    IMAGE_SUMMARY_PROMPT,
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=220,
+                )
+            )
 
-    summary = ". ".join(sentences)
-    if len(cleaned_text) > len(summary):
-        summary += "."
-    return summary[:600]
+            summary = (response.text or "").strip()
+            if not summary:
+                raise ValueError("Vision model returned an empty image summary.")
+
+            return f"[Image summary: {summary}]"
+        except Exception as e:
+            logger.warning(
+                "Image %d failed on attempt %d: %s - %s",
+                image_index, attempt + 1, type(e).__name__, e
+            )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+                delay += 5
+
+    logger.warning(
+        "Continuing without generated summary for image %d.", image_index
+    )
+    return IMAGE_SUMMARY_FALLBACK
+
+async def summarise_images(images: list) -> list[str]:
+    if not images:
+        return []
+
+    summaries = []
+    logger.info("Found %d extracted images to summarize.", len(images))
+    for image_index, image in enumerate(images, start=1):
+        summaries.append(await summarise_image(image, image_index))
+        await asyncio.sleep(1)
+
+    return summaries
 
 async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]:
-    print(f"[SUMMARIZER] Preparing concurrent summarization for {len(sections)} sections...")
+    logger.info("Preparing Single-Shot Batch prompt for %d sections...", len(sections))
+    
+    # Prepare the payload mapping
+    payload_data = []
+    for sec in sections:
+        text_snippet = sec["raw_text"][:8000] 
+        payload_data.append({
+            "section_name": sec["section_name"],
+            "text": text_snippet
+        })
 
-    client = _get_client()
+    prompt_content = f"{SYSTEM_PROMPT}\n\nDocument Sections Data:\n{json.dumps(payload_data)}"
+    
+    max_retries = 4
+    # PIVOT: Started delay at 45s to safely clear Google's ~33s Free Tier timeout lock
+    delay = 45 
 
-    max_retries = 5
-    base_delay = 3
+    for attempt in range(max_retries):
+        try:
+            logger.info("Executing API Call (Attempt %d/%d) using %s...", attempt + 1, max_retries, MODEL_NAME)
+            response = await client.aio.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt_content,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=BatchSummaryResponse,
+                    temperature=0.2,
+                )
+            )
+            
+            response_json = json.loads(response.text)
+            generated_summaries = response_json.get("summaries", [])
+            
+            summary_lookup = {item["section_name"]: item["summary"] for item in generated_summaries}
+            
+            final_results = []
+            for sec in sections:
+                name = sec["section_name"]
+                summary_text = summary_lookup.get(name, "[Summary Generation Failed]")
+                
+                final_results.append(SectionSummary(
+                    section_name=name,
+                    raw_text=sec["raw_text"],
+                    summary=summary_text
+                ))
+                
+            logger.info("Single-Shot Generation Complete! Extracted %d summaries.", len(final_results))
+            return final_results
+            
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.warning("API Error on attempt %d: %s - %s", attempt + 1, type(e).__name__, e)
+            
+            if "quota" in err_str or "429" in err_str or "exhausted" in err_str:
+                if attempt < max_retries - 1:
+                    logger.warning("Rate limit hit. Google API is in timeout. Waiting %d seconds before retry...", delay)
+                    await asyncio.sleep(delay)
+                    delay += 15
+                else:
+                    logger.error("FATAL: Max retries exceeded.")
+                    raise RuntimeError(f"Max retries exceeded due to rate limits. Please check your API quota.") from e
+            else:
+                logger.error("Non-retryable error.", exc_info=True)
+                raise
 
-    # Limit concurrent summarization calls to avoid quota exhaustion.
-    # Tune via SUMMARIZE_MAX_CONCURRENT env var (default 5).
-    max_concurrent = int(os.getenv("SUMMARIZE_MAX_CONCURRENT", "5"))
-    sem = asyncio.Semaphore(max_concurrent)
-
-    async def _summarise_one(sec: dict, idx: int) -> tuple[int, SectionSummary]:
-        """Summarize a single section with retries. Returns (original_index, result)."""
-        text_snippet = sec["raw_text"][:8000]
-        prompt_content = (
-            f"{SYSTEM_PROMPT}\n\nSection:\n"
-            f"{json.dumps({'section_name': sec['section_name'], 'text': text_snippet})}"
-        )
-        summary_text = _fallback_summary(text_snippet)
-
-        async with sem:
-            for attempt in range(max_retries):
-                try:
-                    print(
-                        f"[SUMMARIZER] Section `{sec['section_name']}` call "
-                        f"(attempt {attempt + 1})"
-                    )
-                    response = await client.aio.models.generate_content(
-                        model=MODEL_NAME,
-                        contents=prompt_content,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=GeneratedSummary,
-                            temperature=0.2,
-                        ),
-                    )
-
-                    # Defensive parse
-                    try:
-                        response_json = json.loads(response.text)
-                        summary_text = (
-                            response_json.get("summary")
-                            or response_json.get("text")
-                            or "[Summary Missing]"
-                        )
-                    except Exception:
-                        summary_text = response.text or "[Summary Missing]"
-
-                    break
-
-                except Exception as e:
-                    print(
-                        f"[SUMMARIZER] Error summarizing section "
-                        f"`{sec['section_name']}`: {e}"
-                    )
-                    if is_retryable_gemini_error(e) and attempt < max_retries - 1:
-                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                        await asyncio.sleep(delay)
-                        continue
-
-                    if not is_retryable_gemini_error(e):
-                        traceback.print_exc()
-                        raise
-
-                    print(
-                        f"[SUMMARIZER] Falling back to extractive summary for "
-                        f"section `{sec['section_name']}` after repeated Gemini errors"
-                    )
-                    break
-
-        return idx, SectionSummary(
-            section_name=sec["section_name"],
-            raw_text=sec["raw_text"],
-            summary=summary_text,
-        )
-
-    # Fire all section summarizations concurrently; gather preserves insertion order
-    # but we use explicit index tuples to guarantee deterministic output ordering.
-    indexed_results = await asyncio.gather(
-        *[_summarise_one(sec, i) for i, sec in enumerate(sections)]
-    )
-
-    # Sort by original index so the section order matches the document structure.
-    final_results = [result for _, result in sorted(indexed_results, key=lambda t: t[0])]
-
-    print(f"[SUMMARIZER] Completed summarization for {len(final_results)} sections.")
-    return final_results
-
+    return []
 
 async def run_pipeline(file_path: str) -> list[SectionSummary]:
     try:
-        # extract_sections() calls docling's converter.convert() which is a
-        # blocking CPU/IO-bound operation (PDF parsing). Run it in a thread-pool
-        # executor so it does not stall the FastAPI async event loop.
-        loop = asyncio.get_running_loop()
-        sections = await loop.run_in_executor(None, extract_sections, file_path)
-
+        parsed_content = extract_document_content(file_path)
+        image_summaries = await summarise_images(parsed_content.images)
+        raw_text = inject_image_summaries(parsed_content.full_text, image_summaries)
+        sections = split_sections(raw_text)
         if not sections:
             return []
-
+            
         results = await batch_summarise_sections(sections)
         return results
     except Exception as e:
-        print(f"[PIPELINE] Pipeline failure: {e}")
-        traceback.print_exc()
+        logger.error("Pipeline failure: %s", e, exc_info=True)
         raise

@@ -77,16 +77,29 @@ The system consists of the following components:
 ## Project Structure
 
 ```bash
-src/
-├── agent/          # Core agent logic
-├── embeddings/     # Embedding + retrieval logic
-├── memory/         # Vector database handling
-├── alignment/      # Alignment & contradiction detection
-├── api/            # FastAPI routes
-└── utils/          # Helper functions
+app/                    # FastAPI backend
+├── api/                # REST API routes
+│   ├── auth.py         # Firebase auth endpoints
+│   ├── documents.py    # Document upload/list/delete
+│   ├── analysis.py     # Analysis sessions & comparisons
+│   └── health.py       # Health check
+├── core/               # Config, database, security
+├── models/             # SQLAlchemy models
+├── schemas/            # Pydantic request/response schemas
+├── services/           # Business logic layer
+└── utils/              # Firebase Admin SDK
 
-tests/              # Test cases
-docs/               # Documentation (optional)
+frontend/               # React + Vite + Tailwind
+├── src/
+│   ├── components/     # Layout, common UI components
+│   ├── contexts/       # Auth, Theme (dark/light)
+│   ├── pages/          # Login, Dashboard, Upload, Analysis, Settings
+│   └── services/       # API client, Firebase config
+
+ingestion_pipeline/     # PDF parsing + summarization (Docling + Gemini)
+GraphEngine/            # Comparison engine (graph DB, retrieval, analyst/verifier)
+
+Dockerfile & docker-compose.yml  # Containerization
 ```
 
 ---
@@ -157,12 +170,14 @@ This enables:
 
 ## Environment Variables
 
-| Variable Name  | Description                         |
-| -------------- | ----------------------------------- |
-| OPENAI_API_KEY | API key for LLM access              |
-| VECTOR_DB_KEY  | Vector database API key (if remote) |
-| MODEL_NAME     | Model used for embeddings/LLM       |
-| PORT           | Application port                    |
+| Variable                  | Description                          |
+| ------------------------- | ------------------------------------ |
+| GEMINI_API_KEY            | Google Gemini API key for LLM access |
+| FIREBASE_CREDENTIALS_PATH | Firebase Admin SDK credentials       |
+| FIREBASE_PROJECT_ID       | Firebase project ID                  |
+| FIREBASE_API_KEY          | Firebase Web API key                 |
+| DATABASE_URL              | SQLite/PostgreSQL URL                |
+| PORT                      | Application port                     |
 
 ---
 
@@ -174,6 +189,21 @@ This enables:
 4. System detects contradictions with previously cited work
 5. User receives a detailed explanation and summary
 6. User highlights a section → system suggests relevant references
+
+---
+
+## Frontend Setup
+
+The frontend is a React + Vite + TypeScript app with Tailwind CSS.
+
+```bash
+cd frontend
+cp .env.example .env   # Fill in Firebase config
+npm install
+npm run dev            # Development on port 5173
+```
+
+The frontend proxies `/api` requests to the backend (port 8000) via Vite's dev server.
 
 ---
 

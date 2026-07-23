@@ -1,9 +1,12 @@
 import asyncio
-import traceback
+import json
+import logging
 from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 from app.models.analysis import AnalysisSession, AnalysisDocument, ComparisonResult
 from app.models.document import Document
 from ingestion_pipeline.chroma_store import chunk_text
@@ -114,7 +117,7 @@ async def run_comparison(
     except Exception as e:
         session.status = "failed"
         db.commit()
-        traceback.print_exc()
+        logger.error("Comparison run failed: %s", e, exc_info=True)
         raise
 
 
@@ -195,11 +198,11 @@ async def _compare_documents(
                     await asyncio.sleep(0.5)
 
             except Exception as e:
-                print(f"[ANALYSIS] Comparison error: {e}")
+                logger.warning("Comparison error: %s", e)
                 continue
 
     except ImportError as e:
-        print(f"[ANALYSIS] GraphEngine import error: {e}")
+        logger.error("GraphEngine import error: %s", e)
 
     return results if results else [dummy_result]
 
