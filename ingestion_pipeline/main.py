@@ -1,5 +1,4 @@
 import os
-import traceback
 import logging
 
 # [DEBUG-PRO] AGGRESSIVE C++ COLLISION OVERRIDES
