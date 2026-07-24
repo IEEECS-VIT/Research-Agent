@@ -8,6 +8,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { UploadPage } from './pages/UploadPage'
 import { AnalysisPage } from './pages/AnalysisPage'
 import { AnalysisDetailPage } from './pages/AnalysisDetailPage'
+import { ChatPage } from './pages/ChatPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 const queryClient = new QueryClient()
@@ -25,6 +26,7 @@ export default function App() {
                 <Route path="/upload" element={<UploadPage />} />
                 <Route path="/analysis" element={<AnalysisPage />} />
                 <Route path="/analysis/:id" element={<AnalysisDetailPage />} />
+                <Route path="/chat" element={<ChatPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

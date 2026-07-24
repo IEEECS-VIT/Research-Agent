@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.core.database import engine, Base
 from app.core.logging import setup_logging, get_logger
 from app.core.ratelimit import rate_limiter
-from app.api import auth, documents, analysis, health
+from app.api import auth, documents, analysis, chat, health
 
 load_dotenv(override=True)
 
@@ -68,6 +68,7 @@ app.include_router(health.router)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
 
 
 @app.get("/")
