@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Upload,
   Search,
+  MessageSquare,
   Settings,
   LogOut,
   FlaskConical,
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/upload', label: 'Upload', icon: Upload },
   { to: '/analysis', label: 'Analysis', icon: Search },
+  { to: '/chat', label: 'Research RAG', icon: MessageSquare },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

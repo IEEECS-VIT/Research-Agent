@@ -85,4 +85,39 @@ export const analysisApi = {
   getGraph: (id: string) => api.get<{ nodes: { id: string; label: string; type: string }[]; edges: { source: string; target: string; support_score: number; contradiction_score: number; confidence: number; relation_type: string }[] }>(`/analysis/sessions/${id}/graph`),
 }
 
+export interface ChatSession {
+  id: string
+  title: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Source {
+  doc_id: string | null
+  filename: string | null
+  section: string | null
+  text: string | null
+  confidence: number | null
+  relation_type: string | null
+  support_score: number | null
+  contradiction_score: number | null
+}
+
+export interface ChatMessage {
+  id: string
+  session_id: string
+  role: string
+  content: string
+  sources: Source[]
+  created_at: string
+}
+
+export const chatApi = {
+  listSessions: () => api.get<ChatSession[]>('/chat/sessions'),
+  getSession: (id: string) => api.get<{ id: string; title: string | null; messages: ChatMessage[] }>(`/chat/sessions/${id}`),
+  createSession: () => api.post<ChatSession>('/chat/sessions'),
+  deleteSession: (id: string) => api.delete(`/chat/sessions/${id}`),
+  sendMessage: (data: { session_id?: string | null; message: string }) => api.post<ChatMessage>('/chat/messages', data),
+}
+
 export default api
