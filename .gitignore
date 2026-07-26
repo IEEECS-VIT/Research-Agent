@@ -1,0 +1,70 @@
+# Environment
+.env
+.env.*
+
+# Python bytecode & caching
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.venv-*/
+pip-wheel-metadata/
+pip-delete-this-directory.txt
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.manifest
+*.spec
+
+# Test / coverage / type checking
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+htmlcov/
+.mypy_cache/
+.dmypy.json
+.pytype/
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Databases & Vector Stores
+*.db
+*.db-shm
+*.db-wal
+graph.db
+.local_chroma_data*/
+chroma_data/
+
+# User Uploads
+uploads/
+
+# Python version managers
+.python-version
+
+# Frontend
+frontend/.vite/
+node_modules/
+dist/
+frontend/dist/
