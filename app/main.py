@@ -11,7 +11,7 @@ from app.core.config import get_settings
 from app.core.database import engine, Base
 from app.core.logging import setup_logging, get_logger
 from app.core.ratelimit import rate_limiter
-from app.api import auth, documents, analysis, chat, health
+from app.api import auth, documents, analysis, chat, health, annotation
 
 load_dotenv(override=True)
 
@@ -24,8 +24,23 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    
+    # Dynamically update SQLite schema for existing databases to support DOI
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(documents)"))
+            columns = [row[1] for row in result.fetchall()]
+            if "doi" not in columns:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN doi VARCHAR"))
+                conn.commit()
+                logger.info("Successfully added 'doi' column to 'documents' table.")
+    except Exception as e:
+        logger.warning("Could not dynamically alter SQLite table 'documents' (non-fatal): %s", e)
+
     logger.info("%s v%s initialized", settings.app_name, settings.app_version)
     yield
+
     logger.info("Shutting down")
 
 
@@ -69,6 +84,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(annotation.router, prefix="/api/v1")
 
 
 @app.get("/")

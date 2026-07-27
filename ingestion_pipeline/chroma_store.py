@@ -76,7 +76,8 @@ async def store_document_in_chroma(doc: ParsedDocument):
                     "filename": doc.filename,
                     "source_type": doc.source_type,
                     "section_name": section.section_name,
-                    "content_type": "summary"
+                    "content_type": "summary",
+                    "doi": doc.doi or ""
                 })
                 ids.append(f"{doc.doc_id}_{section.section_name}_summary_{i}")
 
@@ -89,7 +90,8 @@ async def store_document_in_chroma(doc: ParsedDocument):
                     "filename": doc.filename,
                     "source_type": doc.source_type,
                     "section_name": section.section_name,
-                    "content_type": "raw_text"
+                    "content_type": "raw_text",
+                    "doi": doc.doi or ""
                 })
                 ids.append(f"{doc.doc_id}_{section.section_name}_raw_{i}")
 

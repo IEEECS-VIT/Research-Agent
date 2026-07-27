@@ -84,7 +84,7 @@ async def upload_document(
 
     try:
         logger.info("Step 1: Parsing and Summarization")
-        summaries = await run_pipeline(str(tmp_path))
+        summaries, doi = await run_pipeline(str(tmp_path))
     except Exception as e:
         cleanup(tmp_path)
         logger.error("Extraction/Summarization failed: %s", e, exc_info=True)
@@ -96,6 +96,7 @@ async def upload_document(
         filename=file.filename,
         source_type=source_type,
         version_id=str(CURRENT_VERSION), 
+        doi=doi,
         sections=summaries,
         total_sections=len(summaries),
         status="success",

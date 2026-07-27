@@ -28,7 +28,7 @@ async def process_document(
         if not file_path or not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        summaries = await run_pipeline(str(file_path))
+        summaries, doi = await run_pipeline(str(file_path))
 
         from ingestion_pipeline.schemas import ParsedDocument
 
@@ -36,6 +36,7 @@ async def process_document(
             filename=document.original_filename,
             source_type=document.source_type,
             version_id=document.version_id or "0",
+            doi=doi,
             sections=summaries,
             total_sections=len(summaries),
             status="success",
@@ -46,6 +47,7 @@ async def process_document(
         except Exception as e:
             logger.warning("ChromaDB store failed (non-fatal): %s", e)
 
+        document.doi = doi
         document.total_sections = len(summaries)
         document.processing_status = ProcessingStatus.COMPLETED.value
         db.commit()

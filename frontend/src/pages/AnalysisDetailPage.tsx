@@ -1,7 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, AlertCircle, CheckCircle, HelpCircle, BarChart3, TrendingUp, TrendingDown, Shield } from 'lucide-react'
-import { analysisApi, type ComparisonResult } from '../services/api'
+import { analysisApi, documentsApi } from '../services/api'
+import type { ComparisonResult } from '../services/api'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { EmptyState } from '../components/ui/EmptyState'
 
@@ -33,6 +34,32 @@ export function AnalysisDetailPage() {
   const navigate = useNavigate()
   const [session, setSession] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [annotating, setAnnotating] = useState<Record<string, boolean>>({})
+
+  const handleAnnotate = async (draftId: string) => {
+    setAnnotating((prev) => ({ ...prev, [draftId]: true }))
+    try {
+      const response = await documentsApi.annotate(draftId)
+      const blob = new Blob([response.data], { type: 'text/markdown' })
+      const url = window.URL.createObjectURL(blob)
+      const contentDisposition = response.headers['content-disposition'] as string | undefined
+      const filenameMatch = contentDisposition?.match(/filename="?([^";]+)"?/) 
+      const downloadName = filenameMatch?.[1] || 'draft_annotated.md'
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', downloadName)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to annotate draft:', err)
+      alert('Failed to download annotated draft. Please try again.')
+    } finally {
+      setAnnotating((prev) => ({ ...prev, [draftId]: false }))
+    }
+  }
+
 
   useEffect(() => {
     if (!id) return
@@ -55,6 +82,7 @@ export function AnalysisDetailPage() {
   if (!session) return null
 
   const comparisons: ComparisonResult[] = session.comparisons || []
+  const uniqueDraftIds = Array.from(new Set(comparisons.map(c => c.source_doc_id)))
   const avgSupport = comparisons.length
     ? comparisons.reduce((s, c) => s + c.support_score, 0) / comparisons.length
     : 0
@@ -91,7 +119,19 @@ export function AnalysisDetailPage() {
               {new Date(session.created_at).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
           </div>
-          <StatusBadge status={session.status} />
+          <div className="flex flex-col items-end gap-2">
+            <StatusBadge status={session.status} />
+            {session.status === 'completed' && uniqueDraftIds.map((draftId) => (
+              <button
+                key={draftId}
+                disabled={annotating[draftId]}
+                onClick={() => handleAnnotate(draftId)}
+                className="btn btn-primary btn-sm mt-2"
+              >
+                {annotating[draftId] ? 'Annotating...' : 'Annotate Draft'}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

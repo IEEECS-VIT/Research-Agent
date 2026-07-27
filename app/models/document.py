@@ -29,8 +29,10 @@ class Document(Base):
     mime_type = Column(String, nullable=True)
     source_type = Column(String, nullable=False)
     version_id = Column(String, default="0")
+    doi = Column(String, nullable=True)
     processing_status = Column(String, default=ProcessingStatus.PENDING.value)
     total_sections = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+

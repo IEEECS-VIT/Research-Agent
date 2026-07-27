@@ -32,3 +32,16 @@ def cleanup(path: Path | str):
             logger.info("Cleaned up temporary file: %s", path)
     except Exception as e:
         logger.warning("Failed to clean up %s: %s", path, e)
+
+import re
+
+DOI_PATTERN = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.IGNORECASE)
+
+def extract_doi(text: str) -> str | None:
+    if not text:
+        return None
+    match = DOI_PATTERN.search(text)
+    if match:
+        # Clean any trailing punctuation that might be caught in the regex boundary
+        return match.group(0).rstrip(".,;:")
+    return None

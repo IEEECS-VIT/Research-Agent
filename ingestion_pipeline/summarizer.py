@@ -16,8 +16,10 @@ from ingestion_pipeline.docling_parser import (
     split_sections,
 )
 from ingestion_pipeline.schemas import SectionSummary
+from ingestion_pipeline.file_utils import extract_doi
 
 load_dotenv(override=True)
+
 
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
@@ -174,17 +176,19 @@ async def batch_summarise_sections(sections: list[dict]) -> list[SectionSummary]
 
     return []
 
-async def run_pipeline(file_path: str) -> list[SectionSummary]:
+async def run_pipeline(file_path: str) -> tuple[list[SectionSummary], str | None]:
     try:
         parsed_content = extract_document_content(file_path)
+        doi = extract_doi(parsed_content.full_text[:3000])  # scan the leading text where DOI metadata usually appears
         image_summaries = await summarise_images(parsed_content.images)
         raw_text = inject_image_summaries(parsed_content.full_text, image_summaries)
         sections = split_sections(raw_text)
         if not sections:
-            return []
+            return [], doi
             
         results = await batch_summarise_sections(sections)
-        return results
+        return results, doi
     except Exception as e:
         logger.error("Pipeline failure: %s", e, exc_info=True)
         raise
+

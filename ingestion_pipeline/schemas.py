@@ -39,11 +39,13 @@ class ParsedDocument(BaseModel):
     version_id: str = "0"  # PIVOT: Removed datetime, set default to "0"
     filename: str
     source_type: str
+    doi: str | None = None
     sections: list[SectionSummary]
     claims: list[Claim] = []
     comparisons: list[ComparisonResult] = []  # Populated after cross-document comparison
     total_sections: int
     status: str
+
 
 class UploadResponse(BaseModel):
     doc_id: str
