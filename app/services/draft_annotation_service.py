@@ -28,7 +28,9 @@ def annotate_document_text(
 ) -> str:
     """Inject comments inline immediately below matched sentences (exact or fuzzy)."""
     annotated_text = original_text
-    annotation_items = annotations_map.items() if isinstance(annotations_map, dict) else annotations_map
+    annotation_items = (
+        annotations_map.items() if isinstance(annotations_map, dict) else annotations_map
+    )
 
     for claim_text, comment_block in annotation_items:
         claim_text_clean = " ".join(claim_text.strip().split())
@@ -36,7 +38,9 @@ def annotate_document_text(
             continue
 
         if claim_text_clean in annotated_text:
-            annotated_text = annotated_text.replace(claim_text_clean, f"{claim_text_clean}\n{comment_block}")
+            annotated_text = annotated_text.replace(
+                claim_text_clean, f"{claim_text_clean}\n{comment_block}"
+            )
             continue
 
         sentences = split_into_sentences(annotated_text)
@@ -51,7 +55,9 @@ def annotate_document_text(
             sentence_clean = " ".join(sentence.strip().split())
             sentence_words = set(sentence_clean.lower().split())
             union = claim_words.union(sentence_words)
-            similarity = len(claim_words.intersection(sentence_words)) / len(union) if union else 0.0
+            similarity = (
+                len(claim_words.intersection(sentence_words)) / len(union) if union else 0.0
+            )
 
             if similarity > max_overlap and similarity >= 0.60:
                 max_overlap = similarity
@@ -107,7 +113,7 @@ def _read_document_text(document: Document) -> str:
     if not document.file_path:
         raise ValueError("Document file path is missing.")
 
-    with open(document.file_path, "r", encoding="utf-8", errors="ignore") as file_handle:
+    with open(document.file_path, encoding="utf-8", errors="ignore") as file_handle:
         return file_handle.read()
 
 
@@ -125,11 +131,15 @@ def _paper_reference_doi(document: Document | None) -> str | None:
 
 async def generate_draft_annotations(db: Session, draft_id: str, user_id: str) -> str:
     """Generate annotated document text from stored comparison results."""
-    document = db.query(Document).filter(
-        Document.id == draft_id,
-        Document.user_id == user_id,
-        Document.source_type == "draft",
-    ).first()
+    document = (
+        db.query(Document)
+        .filter(
+            Document.id == draft_id,
+            Document.user_id == user_id,
+            Document.source_type == "draft",
+        )
+        .first()
+    )
 
     if not document:
         raise ValueError("Draft document not found or unauthorized.")
@@ -149,13 +159,11 @@ async def generate_draft_annotations(db: Session, draft_id: str, user_id: str) -
 
     target_doc_ids = {row.target_doc_id for row in comparison_rows if row.target_doc_id}
     target_documents = (
-        db.query(Document)
-        .filter(Document.id.in_(target_doc_ids))
-        .all()
-        if target_doc_ids
-        else []
+        db.query(Document).filter(Document.id.in_(target_doc_ids)).all() if target_doc_ids else []
     )
-    target_document_map = {target_document.id: target_document for target_document in target_documents}
+    target_document_map = {
+        target_document.id: target_document for target_document in target_documents
+    }
 
     annotations: list[tuple[str, str]] = []
     for row in comparison_rows:
@@ -177,8 +185,8 @@ async def generate_draft_annotations(db: Session, draft_id: str, user_id: str) -
             "[WARNING: RISK OF OVERCLAIMING]",
             f"Contradicted by: {paper_title}",
             f"DOI: {paper_doi}" if paper_doi else "DOI: Not found",
-            f"Evidence: \"{paper_claim}\"",
-            f"Suggested Rewrite: \"{suggested_rewrite}\"",
+            f'Evidence: "{paper_claim}"',
+            f'Suggested Rewrite: "{suggested_rewrite}"',
             "-->",
         ]
         annotations.append((source_claim, "\n".join(comment_lines)))

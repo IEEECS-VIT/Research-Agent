@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.schemas.auth import FirebaseAuthRequest, AuthResponse, UserProfile
-from app.services.auth_service import verify_firebase_token, get_or_create_user
+from app.schemas.auth import AuthResponse, FirebaseAuthRequest, UserProfile
+from app.services.auth_service import get_or_create_user, verify_firebase_token
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

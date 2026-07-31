@@ -1,17 +1,15 @@
-import os
-import asyncio
 import logging
-from pathlib import Path
+import os
 
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
 from app.core.config import get_settings
 from app.models.document import Document, ProcessingStatus
-from ingestion_pipeline.summarizer import run_pipeline
-from ingestion_pipeline.schemas import SectionSummary
 from ingestion_pipeline.chroma_store import store_document_in_chroma
-from ingestion_pipeline.file_utils import validate_extension
+from ingestion_pipeline.schemas import SectionSummary
+from ingestion_pipeline.summarizer import run_pipeline
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -20,12 +18,12 @@ async def process_document(
     db: Session,
     document: Document,
 ) -> list[SectionSummary]:
-    document.processing_status = ProcessingStatus.PROCESSING.value
+    document.processing_status = ProcessingStatus.PROCESSING.value  # type: ignore
     db.commit()
 
     try:
         file_path = document.file_path
-        if not file_path or not os.path.exists(file_path):
+        if not file_path or not os.path.exists(str(file_path)):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         summaries, doi = await run_pipeline(str(file_path))
@@ -33,9 +31,9 @@ async def process_document(
         from ingestion_pipeline.schemas import ParsedDocument
 
         doc = ParsedDocument(
-            filename=document.original_filename,
-            source_type=document.source_type,
-            version_id=document.version_id or "0",
+            filename=str(document.original_filename),
+            source_type=str(document.source_type),
+            version_id=str(document.version_id or "0"),
             doi=doi,
             sections=summaries,
             total_sections=len(summaries),
@@ -47,17 +45,17 @@ async def process_document(
         except Exception as e:
             logger.warning("ChromaDB store failed (non-fatal): %s", e)
 
-        document.doi = doi
-        document.total_sections = len(summaries)
-        document.processing_status = ProcessingStatus.COMPLETED.value
+        document.doi = doi  # type: ignore
+        document.total_sections = len(summaries)  # type: ignore
+        document.processing_status = ProcessingStatus.COMPLETED.value  # type: ignore
         db.commit()
         db.refresh(document)
 
         return summaries
 
     except Exception as e:
-        document.processing_status = ProcessingStatus.FAILED.value
-        document.error_message = str(e)
+        document.processing_status = ProcessingStatus.FAILED.value  # type: ignore
+        document.error_message = str(e)  # type: ignore
         db.commit()
         logger.error("Document processing failed: %s", e, exc_info=True)
         raise

@@ -1,6 +1,8 @@
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, Text, Integer, Float, ForeignKey
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text
+
 from app.core.database import Base
 
 
@@ -11,8 +13,12 @@ class AnalysisSession(Base):
     user_id = Column(String, ForeignKey("users.firebase_uid"), nullable=False, index=True)
     name = Column(String, nullable=True)
     status = Column(String, default="pending")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
 
 class AnalysisDocument(Base):
@@ -22,7 +28,7 @@ class AnalysisDocument(Base):
     session_id = Column(String, ForeignKey("analysis_sessions.id"), nullable=False, index=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=False)
     role = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class ComparisonResult(Base):
@@ -42,4 +48,4 @@ class ComparisonResult(Base):
     verifier_status = Column(String, nullable=True)
     relation_type = Column(String, nullable=True)
     confidence_state = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))

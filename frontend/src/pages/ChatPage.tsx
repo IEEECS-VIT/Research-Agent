@@ -169,7 +169,7 @@ export function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
-  const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
+  const { data: sessions = [] } = useQuery({
     queryKey: ['chat-sessions'],
     queryFn: async () => {
       const res = await api.get<ChatSession[]>('/chat/sessions')

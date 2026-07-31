@@ -1,17 +1,16 @@
-import os
 import time
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
+from app.api import analysis, annotation, auth, chat, documents, health
 from app.core.config import get_settings
-from app.core.database import engine, Base
-from app.core.logging import setup_logging, get_logger
+from app.core.database import Base, engine
+from app.core.logging import get_logger, setup_logging
 from app.core.ratelimit import rate_limiter
-from app.api import auth, documents, analysis, chat, health, annotation
 
 load_dotenv(override=True)
 
@@ -24,10 +23,11 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
-    
+
     # Dynamically update SQLite schema for existing databases to support DOI
     try:
         from sqlalchemy import text
+
         with engine.connect() as conn:
             result = conn.execute(text("PRAGMA table_info(documents)"))
             columns = [row[1] for row in result.fetchall()]
@@ -58,7 +58,10 @@ async def metrics_middleware(request: Request, call_next):
     elapsed = time.perf_counter() - start
     logger.debug(
         "%s %s -> %d (%.2fms)",
-        request.method, request.url.path, response.status_code, elapsed * 1000,
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed * 1000,
     )
     response.headers["X-Response-Time-Ms"] = str(round(elapsed * 1000, 2))
     return response
@@ -99,6 +102,7 @@ async def root():
 @app.get("/metrics")
 async def metrics():
     import platform
+
     return {
         "service": settings.app_name,
         "version": settings.app_version,

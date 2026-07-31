@@ -1,25 +1,23 @@
 import asyncio
 import json
 import logging
-from typing import Any
+
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.models.analysis import AnalysisDocument, AnalysisSession, ComparisonResult
+from app.models.document import Document
 
 logger = logging.getLogger(__name__)
-from app.models.analysis import AnalysisSession, AnalysisDocument, ComparisonResult
-from app.models.document import Document
-from ingestion_pipeline.chroma_store import chunk_text
 
 settings = get_settings()
 
 try:
-    from GraphEngine.engines.retrieval_engine import retrieve_cross_type
     from GraphEngine.engines.analyst import analyze
     from GraphEngine.engines.verifier import verify
+
     from GraphEngine.engines.confidence_engine import compute_confidence
-    from GraphEngine.utils.gemini_client import generate_json_async
-    from GraphEngine.utils.constants import TOP_K, EMBEDDING_DIM
+    from GraphEngine.engines.retrieval_engine import retrieve_cross_type
 
     GRAPH_ENGINE_AVAILABLE = True
 except ImportError:
@@ -63,15 +61,19 @@ async def run_comparison(
     session_id: str,
     user_id: str,
 ) -> list[ComparisonResult]:
-    session = db.query(AnalysisSession).filter(
-        AnalysisSession.id == session_id,
-        AnalysisSession.user_id == user_id,
-    ).first()
+    session = (
+        db.query(AnalysisSession)
+        .filter(
+            AnalysisSession.id == session_id,
+            AnalysisSession.user_id == user_id,
+        )
+        .first()
+    )
 
     if not session:
         raise ValueError("Session not found")
 
-    session.status = "processing"
+    session.status = "processing" # type: ignore
     db.commit()
 
     try:
@@ -104,18 +106,18 @@ async def run_comparison(
             for paper in paper_docs:
                 comparisons = await _compare_documents(draft, paper)
                 for comp in comparisons:
-                    comp.session_id = session_id
+                    comp.session_id = session_id # type: ignore
                     db.add(comp)
                     results.append(comp)
 
         db.commit()
-        session.status = "completed"
+        session.status = "completed" # type: ignore
         db.commit()
 
         return results
 
     except Exception as e:
-        session.status = "failed"
+        session.status = "failed" # type: ignore
         db.commit()
         logger.error("Comparison run failed: %s", e, exc_info=True)
         raise
@@ -153,9 +155,9 @@ async def _compare_documents(
                 )
                 if not response.embeddings:
                     continue
-                embedding = [float(v) for v in response.embeddings[0].values]
+                embedding = [float(v) for v in response.embeddings[0].values] # type: ignore
 
-                retrieved = retrieve_cross_type(
+                retrieve_cross_type(
                     query_embedding=embedding,
                     source_doc_type="draft",
                     n_results=5,
@@ -176,24 +178,26 @@ async def _compare_documents(
                     )
 
                     from GraphEngine.utils.helpers import (
-                        derive_relation_type,
                         derive_confidence_state,
+                        derive_relation_type,
                     )
 
-                    results.append(ComparisonResult(
-                        source_doc_id=draft.id,
-                        target_doc_id=paper.id,
-                        source_section="draft_section",
-                        target_section="paper_section",
-                        source_text=d_text[:500],
-                        target_text=p_text[:500],
-                        support_score=support,
-                        contradiction_score=contradiction,
-                        confidence=confidence,
-                        verifier_status=verifier_status,
-                        relation_type=derive_relation_type(support, contradiction),
-                        confidence_state=derive_confidence_state(confidence, verifier_status),
-                    ))
+                    results.append(
+                        ComparisonResult(
+                            source_doc_id=draft.id,
+                            target_doc_id=paper.id,
+                            source_section="draft_section",
+                            target_section="paper_section",
+                            source_text=d_text[:500],
+                            target_text=p_text[:500],
+                            support_score=support,
+                            contradiction_score=contradiction,
+                            confidence=confidence,
+                            verifier_status=verifier_status,
+                            relation_type=derive_relation_type(support, contradiction),
+                            confidence_state=derive_confidence_state(confidence, verifier_status),
+                        )
+                    )
 
                     await asyncio.sleep(0.5)
 
@@ -210,7 +214,7 @@ async def _compare_documents(
 def _get_document_chunks(document: Document) -> list[str]:
     if document.file_path and document.file_path.endswith(".json"):
         try:
-            with open(document.file_path) as f:
+            with open(document.file_path) as f: # type: ignore
                 data = json.load(f)
                 sections = data.get("sections", [])
                 return [s.get("raw_text", "") or s.get("summary", "") for s in sections]

@@ -1,16 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.schemas.analysis import (
-    CreateAnalysisRequest,
-    AnalysisSessionResponse,
-    AnalysisDetailResponse,
-    ComparisonResultResponse,
-    ComparisonGraphResponse,
-)
 from app.models.analysis import AnalysisSession, ComparisonResult
+from app.schemas.analysis import (
+    AnalysisDetailResponse,
+    AnalysisSessionResponse,
+    ComparisonGraphResponse,
+    ComparisonResultResponse,
+    CreateAnalysisRequest,
+)
 from app.services.analysis_service import create_analysis_session, run_comparison
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -71,19 +71,19 @@ async def get_session_detail(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = db.query(AnalysisSession).filter(
-        AnalysisSession.id == session_id,
-        AnalysisSession.user_id == current_user["uid"],
-    ).first()
+    session = (
+        db.query(AnalysisSession)
+        .filter(
+            AnalysisSession.id == session_id,
+            AnalysisSession.user_id == current_user["uid"],
+        )
+        .first()
+    )
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    comparisons = (
-        db.query(ComparisonResult)
-        .filter(ComparisonResult.session_id == session_id)
-        .all()
-    )
+    comparisons = db.query(ComparisonResult).filter(ComparisonResult.session_id == session_id).all()
 
     return AnalysisDetailResponse(
         id=session.id,
@@ -117,19 +117,19 @@ async def get_session_graph(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = db.query(AnalysisSession).filter(
-        AnalysisSession.id == session_id,
-        AnalysisSession.user_id == current_user["uid"],
-    ).first()
+    session = (
+        db.query(AnalysisSession)
+        .filter(
+            AnalysisSession.id == session_id,
+            AnalysisSession.user_id == current_user["uid"],
+        )
+        .first()
+    )
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    comparisons = (
-        db.query(ComparisonResult)
-        .filter(ComparisonResult.session_id == session_id)
-        .all()
-    )
+    comparisons = db.query(ComparisonResult).filter(ComparisonResult.session_id == session_id).all()
 
     doc_ids = set()
     for c in comparisons:

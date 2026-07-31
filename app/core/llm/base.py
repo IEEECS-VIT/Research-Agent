@@ -14,19 +14,20 @@ class GenerateResult:
 
 
 class LLMProvider(ABC):
-
     @abstractmethod
-    async def embed_content(self, text: str, model: str | None = None) -> EmbeddingResult:
-        ...
+    async def embed_content(self, text: str, model: str | None = None) -> EmbeddingResult: ...
 
     @abstractmethod
     async def generate_content(
         self, prompt: str, model: str | None = None, **kwargs: Any
-    ) -> GenerateResult:
-        ...
+    ) -> GenerateResult: ...
 
     @abstractmethod
     async def generate_content_with_image(
-        self, prompt: str, image_bytes: bytes, mime_type: str, model: str | None = None, **kwargs: Any
-    ) -> GenerateResult:
-        ...
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        mime_type: str,
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> GenerateResult: ...

@@ -2,7 +2,6 @@ from app.core.config import get_settings
 from app.core.llm.base import LLMProvider
 from app.core.llm.gemini_provider import GeminiProvider
 
-
 _provider: LLMProvider | None = None
 
 

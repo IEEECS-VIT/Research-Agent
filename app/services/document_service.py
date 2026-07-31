@@ -1,16 +1,12 @@
 import os
-import json
 import uuid
-import shutil
 from pathlib import Path
-from datetime import datetime, timezone
 
+from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
-from fastapi import UploadFile, HTTPException
 
 from app.core.config import get_settings
-from app.models.document import Document, SourceType, ProcessingStatus
-from app.schemas.document import DocumentUploadResponse
+from app.models.document import Document, ProcessingStatus
 
 settings = get_settings()
 
@@ -82,10 +78,14 @@ def get_user_documents(
 
 
 def get_document(db: Session, document_id: str, user_id: str) -> Document | None:
-    return db.query(Document).filter(
-        Document.id == document_id,
-        Document.user_id == user_id,
-    ).first()
+    return (
+        db.query(Document)
+        .filter(
+            Document.id == document_id,
+            Document.user_id == user_id,
+        )
+        .first()
+    )
 
 
 def delete_document(db: Session, document: Document) -> None:

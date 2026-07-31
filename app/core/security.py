@@ -1,8 +1,9 @@
-from fastapi import Request, HTTPException, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
-from app.services.auth_service import verify_firebase_token, get_or_create_user
+from app.services.auth_service import get_or_create_user, verify_firebase_token
 
 security = HTTPBearer(auto_error=False)
 

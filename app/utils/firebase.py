@@ -3,7 +3,8 @@ import os
 from functools import lru_cache
 
 import firebase_admin
-from firebase_admin import credentials, auth
+from firebase_admin import auth, credentials
+
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -33,7 +34,7 @@ def get_firebase_app():
     return _firebase_app
 
 
-@lru_cache()
+@lru_cache
 def get_firebase_auth():
     get_firebase_app()
     return auth

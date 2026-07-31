@@ -1,18 +1,19 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
+from app.models.chat import ChatMessage, ChatSession
 from app.schemas.chat import (
-    SendMessageRequest,
-    MessageResponse,
-    ChatSessionResponse,
     ChatSessionDetailResponse,
+    ChatSessionResponse,
+    MessageResponse,
+    SendMessageRequest,
     Source,
 )
-from app.models.chat import ChatSession, ChatMessage
 from app.services.research_rag_service import get_rag_agent
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -67,10 +68,14 @@ async def get_session(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = db.query(ChatSession).filter(
-        ChatSession.id == session_id,
-        ChatSession.user_id == current_user["uid"],
-    ).first()
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user["uid"],
+        )
+        .first()
+    )
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -107,10 +112,14 @@ async def delete_session(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = db.query(ChatSession).filter(
-        ChatSession.id == session_id,
-        ChatSession.user_id == current_user["uid"],
-    ).first()
+    session = (
+        db.query(ChatSession)
+        .filter(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user["uid"],
+        )
+        .first()
+    )
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -140,10 +149,14 @@ async def send_message(
         db.refresh(session)
         session_id = session.id
     else:
-        session = db.query(ChatSession).filter(
-            ChatSession.id == session_id,
-            ChatSession.user_id == current_user["uid"],
-        ).first()
+        session = (
+            db.query(ChatSession)
+            .filter(
+                ChatSession.id == session_id,
+                ChatSession.user_id == current_user["uid"],
+            )
+            .first()
+        )
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
@@ -167,7 +180,7 @@ async def send_message(
     )
     db.add(assistant_message)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session.updated_at = now
     if session.title == "New Conversation" or session.title is None:
         session.title = request.message[:80] + ("..." if len(request.message) > 80 else "")
