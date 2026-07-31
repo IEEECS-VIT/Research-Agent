@@ -2,21 +2,17 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_URL = "sqlite:///./graph.db"
+from app.core.config import get_settings
 
-# SQLite configuration for thread safety
+settings = get_settings()
+DATABASE_URL = settings.database_url
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},  # Allow cross-thread access
-    pool_pre_ping=True,  # Verify connections before using them
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=10,
 )
-
-# Enable foreign keys for SQLite
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()

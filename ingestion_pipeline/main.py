@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from ingestion_pipeline.chroma_store import store_document_in_chroma
+from ingestion_pipeline.pinecone_store import store_document_in_pinecone
 from ingestion_pipeline.file_utils import cleanup, save_upload, validate_extension
 from ingestion_pipeline.schemas import ParsedDocument, UploadResponse
 from ingestion_pipeline.summarizer import run_pipeline
@@ -106,7 +106,7 @@ async def upload_document(
 
     try:
         logger.info("Step 2: Vector Embeddings and ChromaDB Insertion")
-        await store_document_in_chroma(doc)
+        await store_document_in_pinecone(doc)
     except Exception as e:
         logger.error("Failed to store in Vector DB: %s", e, exc_info=True)
         raise HTTPException(500, f"Failed to store in Vector DB: {str(e)}")

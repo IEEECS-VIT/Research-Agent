@@ -18,9 +18,17 @@ class Settings(BaseSettings):
     firebase_project_id: str = ""
     firebase_api_key: str = ""
 
-    database_url: str = "sqlite:///./research_agent.db"
-    chroma_db_path: str = ""
-    chroma_collection: str = "research_papers_v12"
+    database_url: str = "postgresql://user:password@localhost:5432/research_agent"
+    
+    # Pinecone
+    pinecone_api_key: str = ""
+    pinecone_index_name: str = "research-papers-v12"
+    
+    # AWS S3
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region_name: str = "us-east-1"
+    aws_bucket_name: str = "research-agent-uploads"
 
     cors_origins: list[str] = ["*"]
 
