@@ -1,13 +1,13 @@
+import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import logging
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling_core.types.doc import PictureItem
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class ParsedContent:
     full_text: str
     images: list[Any]
 
+
 def _clean_name(raw: str) -> str:
     try:
         cleaned = re.sub(r"^[\d\.\s]+", "", raw.strip())
@@ -28,6 +29,7 @@ def _clean_name(raw: str) -> str:
         return cleaned or "section"
     except Exception:
         return "section"
+
 
 def _fallback_split(text: str) -> list[dict]:
     try:
@@ -40,10 +42,11 @@ def _fallback_split(text: str) -> list[dict]:
             lines = chunk.splitlines()
             name = _clean_name(lines[0]) if lines else "section"
             sections.append({"section_name": name, "raw_text": chunk})
-        
+
         return sections or [{"section_name": "full_document", "raw_text": text}]
     except Exception:
         return [{"section_name": "full_document", "raw_text": text}]
+
 
 def _build_converter(file_path: str) -> DocumentConverter:
     if Path(file_path).suffix.lower() != ".pdf":
@@ -55,10 +58,9 @@ def _build_converter(file_path: str) -> DocumentConverter:
     pipeline_options.generate_picture_images = True
 
     return DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
     )
+
 
 def _extract_picture_images(result: Any) -> list[Any]:
     images = []
@@ -75,6 +77,7 @@ def _extract_picture_images(result: Any) -> list[Any]:
 
     return images
 
+
 def extract_document_content(file_path: str) -> ParsedContent:
     logger.info("Starting Docling conversion for: %s", file_path)
     try:
@@ -82,15 +85,17 @@ def extract_document_content(file_path: str) -> ParsedContent:
         result = converter.convert(file_path)
         full_text = result.document.export_to_markdown()
         images = _extract_picture_images(result)
-        
+
         logger.info(
             "Conversion success. Extracted %d characters and %d picture images.",
-            len(full_text), len(images)
+            len(full_text),
+            len(images),
         )
         return ParsedContent(full_text=full_text, images=images)
     except Exception as e:
         logger.error("Critical failure during extraction: %s", e, exc_info=True)
         raise
+
 
 def inject_image_summaries(full_text: str, image_summaries: list[str]) -> str:
     if not image_summaries:
@@ -104,7 +109,9 @@ def inject_image_summaries(full_text: str, image_summaries: list[str]) -> str:
 
     placeholder_patterns = [
         re.compile(r"(?im)^[ \t]*<!--\s*(?:image|picture)\s*-->[ \t]*$"),
-        re.compile(r"(?im)^[ \t]*!\[[^\]\n]*(?:image|picture|figure)?[^\]\n]*\]\([^\)\n]*\)[ \t]*$"),
+        re.compile(
+            r"(?im)^[ \t]*!\[[^\]\n]*(?:image|picture|figure)?[^\]\n]*\]\([^\)\n]*\)[ \t]*$"
+        ),
     ]
 
     replaced = 0
@@ -123,18 +130,21 @@ def inject_image_summaries(full_text: str, image_summaries: list[str]) -> str:
     for pattern in placeholder_patterns:
         if replaced >= len(normalized_summaries):
             break
-        updated_text = pattern.sub(_replace, updated_text, count=len(normalized_summaries) - replaced)
+        updated_text = pattern.sub(
+            _replace, updated_text, count=len(normalized_summaries) - replaced
+        )
 
     if replaced < len(normalized_summaries):
         remaining = "\n\n".join(normalized_summaries[replaced:])
         updated_text = f"{updated_text.rstrip()}\n\n## Extracted images\n{remaining}"
         logger.warning(
             "Fewer image placeholders than extracted images. Appended %d image summaries.",
-            len(normalized_summaries) - replaced
+            len(normalized_summaries) - replaced,
         )
 
     logger.info("Replaced %d Docling image placeholders with summaries.", replaced)
     return updated_text
+
 
 def split_sections(full_text: str) -> list[dict]:
     if "## " not in full_text:
@@ -151,19 +161,22 @@ def split_sections(full_text: str) -> list[dict]:
         lines = chunk.splitlines()
         heading_line = lines[0]
         body = "\n".join(lines[1:]).strip()
-        
+
         raw_name = re.sub(r"^##\s*", "", heading_line)
         section_name = _clean_name(raw_name)
 
         if not section_name or section_name in SKIP_SECTIONS:
             continue
 
-        sections.append({
-            "section_name": section_name,
-            "raw_text": f"{heading_line}\n{body}".strip(),
-        })
+        sections.append(
+            {
+                "section_name": section_name,
+                "raw_text": f"{heading_line}\n{body}".strip(),
+            }
+        )
 
     return sections if sections else _fallback_split(full_text)
+
 
 def extract_sections(file_path: str) -> list[dict]:
     try:

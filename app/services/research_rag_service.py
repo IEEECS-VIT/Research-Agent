@@ -1,7 +1,5 @@
-import asyncio
-import logging
 import json
-import os
+import logging
 from typing import Any
 
 from app.core.config import get_settings
@@ -11,30 +9,24 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 try:
-    from GraphEngine.analytics.graph_builder import build_graph_from_sqlite
-    from GraphEngine.analytics.traversal import (
-        get_high_confidence_contradictions,
-        get_low_confidence_edges,
-        find_claim_neighbors,
-        filter_edges,
-    )
-    from GraphEngine.analytics.graph_summary import graph_summary
     from GraphEngine.analytics.clustering import (
         find_contradiction_clusters,
         find_low_confidence_regions,
         find_verifier_failure_patterns,
     )
     from GraphEngine.analytics.consensus import (
+        consensus_breakdown,
         find_consensus_papers,
         find_unstable_claims,
-        consensus_breakdown,
     )
-    from GraphEngine.analytics.reliability import (
-        compute_claim_reliability,
-        compute_paper_trust_score,
+    from GraphEngine.analytics.graph_builder import build_graph_from_sqlite
+    from GraphEngine.analytics.graph_summary import graph_summary
+    from GraphEngine.analytics.traversal import (
+        find_claim_neighbors,
+        find_review_required_claims,
+        get_high_confidence_contradictions,
     )
     from GraphEngine.engines.retrieval_engine import retrieve_chunks
-    from GraphEngine.utils.constants import COLLECTION_NAME, CHROMA_DB_PATH, TOP_K
 
     GRAPH_ENGINE_AVAILABLE = True
 except ImportError as e:
@@ -44,7 +36,6 @@ except ImportError as e:
 try:
     from google import genai
     from google.genai import types
-    from pydantic import BaseModel, Field
 
     LLM_AVAILABLE = True
 except ImportError:
@@ -186,7 +177,15 @@ class RAGAgent:
             )
             result = json.loads(response.text or "{}")
             intent = result.get("intent", "general")
-            valid_intents = {"graph_contradictions", "graph_consensus", "graph_claim_reliability", "graph_summary", "literature_search", "graph_explore", "general"}
+            valid_intents = {
+                "graph_contradictions",
+                "graph_consensus",
+                "graph_claim_reliability",
+                "graph_summary",
+                "literature_search",
+                "graph_explore",
+                "general",
+            }
             return intent if intent in valid_intents else "general"
         except Exception as e:
             logger.warning("Intent classification failed: %s", e)
@@ -200,28 +199,50 @@ class RAGAgent:
             return "graph_consensus"
         if any(w in q for w in ["reliable", "trust", "confidence", "how strong", "how sure"]):
             return "graph_claim_reliability"
-        if any(w in q for w in ["summar", "overview", "what is in", "describe the graph", "tell me about"]):
+        if any(
+            w in q
+            for w in ["summar", "overview", "what is in", "describe the graph", "tell me about"]
+        ):
             return "graph_summary"
-        if any(w in q for w in ["find", "search", "papers about", "evidence", "support", "claim that", "causes"]):
+        if any(
+            w in q
+            for w in [
+                "find",
+                "search",
+                "papers about",
+                "evidence",
+                "support",
+                "claim that",
+                "causes",
+            ]
+        ):
             return "literature_search"
         if any(w in q for w in ["relation", "between", "compare", "link", "connect"]):
             return "graph_explore"
         return "general"
 
-    async def answer_question(self, question: str, user_id: str | None = None) -> tuple[str, list[Source]]:
+    async def answer_question(
+        self, question: str, user_id: str | None = None
+    ) -> tuple[str, list[Source]]:
         intent = await self.classify_intent(question)
         logger.info("Classified intent: %s for question: %s", intent, question[:100])
 
         if intent == "literature_search":
             return await self._literature_search(question)
-        elif intent in ("graph_contradictions", "graph_consensus", "graph_claim_reliability", "graph_summary", "graph_explore"):
+        elif intent in (
+            "graph_contradictions",
+            "graph_consensus",
+            "graph_claim_reliability",
+            "graph_summary",
+            "graph_explore",
+        ):
             return await self._graph_query(question, intent)
         else:
             return await self._general_chat(question)
 
     async def _literature_search(self, question: str) -> tuple[str, list[Source]]:
         graph_context = ""
-        evidence_chunks = []
+        evidence_chunks: list[dict[str, Any]] = []
         sources: list[Source] = []
 
         if GRAPH_ENGINE_AVAILABLE:
@@ -253,31 +274,51 @@ class RAGAgent:
                                 for i, doc_list in enumerate(chroma_results["documents"]):
                                     for j, text in enumerate(doc_list):
                                         meta = {}
-                                        if chroma_results.get("metadatas") and len(chroma_results["metadatas"]) > i:
-                                            meta = chroma_results["metadatas"][i][j] if j < len(chroma_results["metadatas"][i]) else {}
+                                        if (
+                                            chroma_results.get("metadatas")
+                                            and len(chroma_results["metadatas"]) > i
+                                        ):
+                                            meta = (
+                                                chroma_results["metadatas"][i][j]
+                                                if j < len(chroma_results["metadatas"][i])
+                                                else {}
+                                            )
 
                                         distance = None
-                                        if chroma_results.get("distances") and len(chroma_results["distances"]) > i:
-                                            distance = chroma_results["distances"][i][j] if j < len(chroma_results["distances"][i]) else None
+                                        if (
+                                            chroma_results.get("distances")
+                                            and len(chroma_results["distances"]) > i
+                                        ):
+                                            distance = (
+                                                chroma_results["distances"][i][j]
+                                                if j < len(chroma_results["distances"][i])
+                                                else None
+                                            )
 
-                                        confidence = max(0.0, min(1.0, 1.0 - (distance or 0.0) / 2.0))
+                                        confidence = max(
+                                            0.0, min(1.0, 1.0 - (distance or 0.0) / 2.0)
+                                        )
 
-                                        evidence_chunks.append({
-                                            "text": text[:500],
-                                            "filename": meta.get("filename", "unknown"),
-                                            "section": meta.get("section_name", ""),
-                                            "doc_id": meta.get("doc_id", ""),
-                                            "confidence": round(confidence, 3),
-                                            "source_type": meta.get("source_type", ""),
-                                        })
+                                        evidence_chunks.append(
+                                            {
+                                                "text": text[:500],
+                                                "filename": meta.get("filename", "unknown"),
+                                                "section": meta.get("section_name", ""),
+                                                "doc_id": meta.get("doc_id", ""),
+                                                "confidence": round(confidence, 3),
+                                                "source_type": meta.get("source_type", ""),
+                                            }
+                                        )
 
-                                        sources.append(Source(
-                                            doc_id=meta.get("doc_id", ""),
-                                            filename=meta.get("filename", "unknown"),
-                                            section=meta.get("section_name", ""),
-                                            text=text[:300],
-                                            confidence=round(confidence, 3),
-                                        ))
+                                        sources.append(
+                                            Source(
+                                                doc_id=meta.get("doc_id", ""),
+                                                filename=meta.get("filename", "unknown"),
+                                                section=meta.get("section_name", ""),
+                                                text=text[:300],
+                                                confidence=round(confidence, 3),
+                                            )
+                                        )
 
                                         if len(sources) >= 8:
                                             break
@@ -292,14 +333,16 @@ class RAGAgent:
                 if graph and graph.number_of_edges() > 0:
                     consensus = consensus_breakdown(graph)
                     for rel_type, count in consensus.items():
-                        evidence_chunks.append({
-                            "text": f"Graph contains {count} edges with relation type: {rel_type}",
-                            "filename": "knowledge_graph",
-                            "section": "graph_consensus",
-                            "doc_id": "graph",
-                            "confidence": 1.0,
-                            "source_type": "graph",
-                        })
+                        evidence_chunks.append(
+                            {
+                                "text": f"Graph contains {count} edges with relation type: {rel_type}",
+                                "filename": "knowledge_graph",
+                                "section": "graph_consensus",
+                                "doc_id": "graph",
+                                "confidence": 1.0,
+                                "source_type": "graph",
+                            }
+                        )
             except Exception as e:
                 logger.warning("Graph query failed: %s", e)
 
@@ -307,7 +350,7 @@ class RAGAgent:
             client = self._get_llm_client()
             if client:
                 evidence_text = "\n\n".join(
-                    f"[{i+1}] From: {e['filename']} (Section: {e['section']}, Confidence: {e['confidence']})\n{e['text']}"
+                    f"[{i + 1}] From: {e['filename']} (Section: {e['section']}, Confidence: {e['confidence']})\n{e['text']}"
                     for i, e in enumerate(evidence_chunks)
                 )
                 prompt = LITERATURE_SEARCH_PROMPT.format(
@@ -325,34 +368,43 @@ class RAGAgent:
                         ),
                     )
                     result = json.loads(response.text or "{}")
-                    answer = result.get("answer", "I couldn't generate a complete answer based on the available evidence.")
+                    answer = result.get(
+                        "answer",
+                        "I couldn't generate a complete answer based on the available evidence.",
+                    )
                     cited_sources = result.get("sources", [])
                     for cs in cited_sources:
-                        sources.append(Source(
-                            doc_id=cs.get("doc_id", ""),
-                            filename=cs.get("filename", ""),
-                            section=cs.get("section", ""),
-                            text=cs.get("text", "")[:300],
-                            confidence=cs.get("confidence"),
-                            relation_type=cs.get("relation_type"),
-                        ))
+                        sources.append(
+                            Source(
+                                doc_id=cs.get("doc_id", ""),
+                                filename=cs.get("filename", ""),
+                                section=cs.get("section", ""),
+                                text=cs.get("text", "")[:300],
+                                confidence=cs.get("confidence"),
+                                relation_type=cs.get("relation_type"),
+                            )
+                        )
                     return answer, sources
                 except Exception as e:
                     logger.warning("LLM answer generation failed: %s", e)
 
-        evidence_summary = "\n".join(
-            f"- {e['filename']}: {e['text'][:100]}..." for e in evidence_chunks[:5]
-        ) if evidence_chunks else "No specific evidence found."
+        evidence_summary = (
+            "\n".join(
+                f"- {e['filename']}: {e.get('text', '')[:100]}..." for e in evidence_chunks[:5]
+            )  # type: ignore
+            if evidence_chunks
+            else "No specific evidence found."
+        )
         answer = f"""Based on the available research data, here is what I found:
 
 {evidence_summary}
 
-{'Retrieved from {n} document chunks and graph data.'.format(n=len(evidence_chunks)) if evidence_chunks else 'The knowledge graph and vector database did not return specific results for this query. Try rephrasing your question or uploading more documents.'}"""
+{f"Retrieved from {len(evidence_chunks)} document chunks and graph data." if evidence_chunks else "The knowledge graph and vector database did not return specific results for this query. Try rephrasing your question or uploading more documents."}"""
         return answer, sources
 
     async def _graph_query(self, question: str, intent: str) -> tuple[str, list[Source]]:
         sources: list[Source] = []
-        graph_data = {}
+        graph_data: dict[str, Any] = {}
         graph = self._get_graph() if GRAPH_ENGINE_AVAILABLE else None
 
         if graph is None:
@@ -379,12 +431,14 @@ class RAGAgent:
                     "clusters": [{"nodes": c} for c in clusters[:10]],
                 }
                 for c in contradictions[:10]:
-                    sources.append(Source(
-                        doc_id=c["source_id"],
-                        text=f"Contradiction edge: {c['source_id']} <-> {c['target_id']} (confidence: {c.get('confidence', 'N/A')})",
-                        confidence=c.get("confidence"),
-                        relation_type="CONTRADICT",
-                    ))
+                    sources.append(
+                        Source(
+                            doc_id=c["source_id"],
+                            text=f"Contradiction edge: {c['source_id']} <-> {c['target_id']} (confidence: {c.get('confidence', 'N/A')})",
+                            confidence=c.get("confidence"),
+                            relation_type="CONTRADICT",
+                        )
+                    )
 
             elif intent == "graph_consensus":
                 consensus = consensus_breakdown(graph)
@@ -396,12 +450,14 @@ class RAGAgent:
                     "total_nodes": graph.number_of_nodes(),
                 }
                 for cp in consensus_papers[:5]:
-                    sources.append(Source(
-                        doc_id=cp["paper_id"],
-                        text=f"Paper {cp['paper_id']} has trust score: {cp['trust_score']:.2f}",
-                        confidence=cp["trust_score"],
-                        relation_type="SUPPORT",
-                    ))
+                    sources.append(
+                        Source(
+                            doc_id=cp["paper_id"],
+                            text=f"Paper {cp['paper_id']} has trust score: {cp['trust_score']:.2f}",
+                            confidence=cp["trust_score"],
+                            relation_type="SUPPORT",
+                        )
+                    )
 
             elif intent == "graph_claim_reliability":
                 unstable = find_unstable_claims(graph)
@@ -411,12 +467,14 @@ class RAGAgent:
                     "graph_summary": summary,
                 }
                 for uc in unstable[:5]:
-                    sources.append(Source(
-                        doc_id=uc["claim_id"],
-                        text=f"Claim {uc['claim_id']} reliability: {uc.get('reliability', 'N/A'):.2f}",
-                        confidence=uc.get("reliability"),
-                        relation_type="MIXED",
-                    ))
+                    sources.append(
+                        Source(
+                            doc_id=uc["claim_id"],
+                            text=f"Claim {uc['claim_id']} reliability: {uc.get('reliability', 'N/A'):.2f}",
+                            confidence=uc.get("reliability"),
+                            relation_type="MIXED",
+                        )
+                    )
 
             elif intent == "graph_summary":
                 summary = graph_summary(graph)
@@ -427,11 +485,13 @@ class RAGAgent:
                     "verifier_failures": failures,
                     "low_confidence_regions": low_conf_regions,
                 }
-                sources.append(Source(
-                    doc_id="graph",
-                    text=f"Graph summary: {summary['total_nodes']} nodes, {summary['total_edges']} edges, {summary['contradiction_count']} contradictions",
-                    confidence=summary.get("average_confidence"),
-                ))
+                sources.append(
+                    Source(
+                        doc_id="graph",
+                        text=f"Graph summary: {summary['total_nodes']} nodes, {summary['total_edges']} edges, {summary['contradiction_count']} contradictions",
+                        confidence=summary.get("average_confidence"),
+                    )
+                )
 
             elif intent == "graph_explore":
                 q = question.lower()
@@ -474,14 +534,16 @@ class RAGAgent:
                     answer = result.get("answer", "Analysis complete. See graph data above.")
                     cited_sources = result.get("sources", [])
                     for cs in cited_sources:
-                        sources.append(Source(
-                            doc_id=cs.get("doc_id", ""),
-                            filename=cs.get("filename", ""),
-                            section=cs.get("section", ""),
-                            text=cs.get("text", "")[:300],
-                            confidence=cs.get("confidence"),
-                            relation_type=cs.get("relation_type"),
-                        ))
+                        sources.append(
+                            Source(
+                                doc_id=cs.get("doc_id", ""),
+                                filename=cs.get("filename", ""),
+                                section=cs.get("section", ""),
+                                text=cs.get("text", "")[:300],
+                                confidence=cs.get("confidence"),
+                                relation_type=cs.get("relation_type"),
+                            )
+                        )
                     return answer, sources
                 except Exception as e:
                     logger.warning("LLM graph answer failed: %s", e)
@@ -517,11 +579,16 @@ class RAGAgent:
                         ),
                     )
                     result = json.loads(response.text or "{}")
-                    return result.get("answer", "I'm here to help with research questions!"), sources
+                    return result.get(
+                        "answer", "I'm here to help with research questions!"
+                    ), sources
                 except Exception as e:
                     logger.warning("General chat failed: %s", e)
 
-        return f"I can help you explore your research knowledge graph and find evidence.{context}", sources
+        return (
+            f"I can help you explore your research knowledge graph and find evidence.{context}",
+            sources,
+        )
 
 
 _rag_agent: RAGAgent | None = None

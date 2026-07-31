@@ -1,11 +1,28 @@
-import asyncio
-from fastapi import APIRouter, Depends, UploadFile, File, Form, Query, HTTPException, BackgroundTasks
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.schemas.document import DocumentUploadResponse, DocumentListResponse, DocumentDetailResponse
-from app.services.document_service import upload_document, get_user_documents, get_document, delete_document
+from app.schemas.document import (
+    DocumentDetailResponse,
+    DocumentListResponse,
+    DocumentUploadResponse,
+)
+from app.services.document_service import (
+    delete_document,
+    get_document,
+    get_user_documents,
+    upload_document,
+)
 from app.services.ingestion_service import process_document
 
 router = APIRouter(prefix="/documents", tags=["Documents"])

@@ -183,7 +183,9 @@ Return JSON with a "claims" array. Each item needs "assertion" and optional "sub
     )
 
     if not parsed:
-        print(f"[CLAIM-EXTRACTOR] LLM failed for section `{section_name}`; using heuristic fallback.")
+        print(
+            f"[CLAIM-EXTRACTOR] LLM failed for section `{section_name}`; using heuristic fallback."
+        )
         return extract_claims_heuristic(
             text_source,
             source_type="draft",
@@ -202,7 +204,9 @@ Return JSON with a "claims" array. Each item needs "assertion" and optional "sub
 
     claims = _dedupe_claims(claims)
     if claims:
-        print(f"[CLAIM-EXTRACTOR] Section `{section_name}`: extracted {len(claims)} draft claims via LLM.")
+        print(
+            f"[CLAIM-EXTRACTOR] Section `{section_name}`: extracted {len(claims)} draft claims via LLM."
+        )
         return claims
 
     return extract_claims_heuristic(text_source, source_type="draft", section_name=section_name)

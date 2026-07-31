@@ -1,13 +1,12 @@
-import json
 from typing import Any
+
 from google import genai
 from google.genai import types
 
-from app.core.llm.base import LLMProvider, EmbeddingResult, GenerateResult
+from app.core.llm.base import EmbeddingResult, GenerateResult, LLMProvider
 
 
 class GeminiProvider(LLMProvider):
-
     def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash-lite"):
         self.client = genai.Client(api_key=api_key)
         self.default_model = default_model
@@ -41,8 +40,12 @@ class GeminiProvider(LLMProvider):
         return GenerateResult(text=response.text or "")
 
     async def generate_content_with_image(
-        self, prompt: str, image_bytes: bytes, mime_type: str,
-        model: str | None = None, **kwargs: Any,
+        self,
+        prompt: str,
+        image_bytes: bytes,
+        mime_type: str,
+        model: str | None = None,
+        **kwargs: Any,
     ) -> GenerateResult:
         config_kwargs = {}
         if "temperature" in kwargs:

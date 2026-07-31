@@ -1,16 +1,16 @@
 """Tests for the Research RAG chat API endpoints."""
 
 import os
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
 
 os.environ["GEMINI_API_KEY"] = "test-key"
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 
+from app.core.database import Base, SessionLocal, engine
 from app.main import app
-from app.core.database import Base, engine, SessionLocal, get_db
-from app.models.chat import ChatSession, ChatMessage
 from app.services.research_rag_service import RAGAgent, reset_rag_agent
 
 
@@ -19,6 +19,7 @@ def setup_db():
     Base.metadata.create_all(bind=engine)
     # Create a test user for foreign key compliance
     from app.models.user import User
+
     db = SessionLocal()
     existing = db.query(User).filter(User.firebase_uid == "test-user-123").first()
     if not existing:
@@ -39,12 +40,14 @@ def reset_agent():
 @pytest.fixture
 def override_deps():
     """Override FastAPI dependencies for testing."""
+
     # Override auth to return a test user
     async def mock_get_current_user():
         return {"uid": "test-user-123", "email": "test@example.com"}
 
     app.dependency_overrides.clear()
     from app.core.security import get_current_user
+
     app.dependency_overrides[get_current_user] = mock_get_current_user
     yield
     app.dependency_overrides.clear()
@@ -92,9 +95,12 @@ class TestChatMessagesAPI:
         agent = RAGAgent()
         agent.answer_question = AsyncMock(return_value=("Test answer", []))
         with patch("app.api.chat.get_rag_agent", return_value=agent):
-            response = client.post("/api/v1/chat/messages", json={
-                "message": "What is the consensus on climate change?",
-            })
+            response = client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "message": "What is the consensus on climate change?",
+                },
+            )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["role"] == "assistant"
@@ -109,19 +115,25 @@ class TestChatMessagesAPI:
         agent = RAGAgent()
         agent.answer_question = AsyncMock(return_value=("Test answer", []))
         with patch("app.api.chat.get_rag_agent", return_value=agent):
-            response = client.post("/api/v1/chat/messages", json={
-                "session_id": session_id,
-                "message": "Show me contradictions",
-            })
+            response = client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": session_id,
+                    "message": "Show me contradictions",
+                },
+            )
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["session_id"] == session_id
 
     def test_send_message_invalid_session(self, override_deps):
-        response = client.post("/api/v1/chat/messages", json={
-            "session_id": "nonexistent",
-            "message": "Hello",
-        })
+        response = client.post(
+            "/api/v1/chat/messages",
+            json={
+                "session_id": "nonexistent",
+                "message": "Hello",
+            },
+        )
         assert response.status_code == 404
 
     @pytest.mark.asyncio
@@ -130,9 +142,12 @@ class TestChatMessagesAPI:
         agent.answer_question = AsyncMock(return_value=("Test answer", []))
         long_message = "This is a very long research question that should be truncated"
         with patch("app.api.chat.get_rag_agent", return_value=agent):
-            response = client.post("/api/v1/chat/messages", json={
-                "message": long_message,
-            })
+            response = client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "message": long_message,
+                },
+            )
         assert response.status_code == 200, response.text
         session_id = response.json()["session_id"]
         get_resp = client.get(f"/api/v1/chat/sessions/{session_id}")
@@ -144,9 +159,12 @@ class TestChatMessagesAPI:
         agent = RAGAgent()
         agent.answer_question = AsyncMock(return_value=("Test answer", []))
         with patch("app.api.chat.get_rag_agent", return_value=agent):
-            send_resp = client.post("/api/v1/chat/messages", json={
-                "message": "What contradictions exist?",
-            })
+            send_resp = client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "message": "What contradictions exist?",
+                },
+            )
         session_id = send_resp.json()["session_id"]
         get_resp = client.get(f"/api/v1/chat/sessions/{session_id}")
         assert get_resp.status_code == 200
@@ -161,21 +179,37 @@ class TestRAGAgentWithSources:
     async def test_send_message_with_sources(self, override_deps):
         agent = RAGAgent()
         from app.schemas.chat import Source
-        agent.answer_question = AsyncMock(return_value=(
-            "Found supporting evidence for your claim.",
-            [
-                Source(doc_id="doc1", filename="paper1.pdf", section="Results",
-                       text="The results confirm the hypothesis", confidence=0.85,
-                       relation_type="SUPPORT"),
-                Source(doc_id="doc2", filename="paper2.pdf", section="Discussion",
-                       text="These findings contradict prior work", confidence=0.72,
-                       relation_type="CONTRADICT"),
-            ],
-        ))
+
+        agent.answer_question = AsyncMock(
+            return_value=(
+                "Found supporting evidence for your claim.",
+                [
+                    Source(
+                        doc_id="doc1",
+                        filename="paper1.pdf",
+                        section="Results",
+                        text="The results confirm the hypothesis",
+                        confidence=0.85,
+                        relation_type="SUPPORT",
+                    ),
+                    Source(
+                        doc_id="doc2",
+                        filename="paper2.pdf",
+                        section="Discussion",
+                        text="These findings contradict prior work",
+                        confidence=0.72,
+                        relation_type="CONTRADICT",
+                    ),
+                ],
+            )
+        )
         with patch("app.api.chat.get_rag_agent", return_value=agent):
-            response = client.post("/api/v1/chat/messages", json={
-                "message": "Find evidence for my claim",
-            })
+            response = client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "message": "Find evidence for my claim",
+                },
+            )
         assert response.status_code == 200, response.text
         data = response.json()
         assert len(data["sources"]) == 2

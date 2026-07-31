@@ -1,14 +1,17 @@
-import os
 import asyncio
 import logging
+import os
 from concurrent.futures import ProcessPoolExecutor
+
 from GraphEngine.utils.gemini_client import _get_client
 from ingestion_pipeline.schemas import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
 USER_HOME = os.path.expanduser("~")
-CHROMA_DATA_DIR = os.environ.get("CHROMA_DB_PATH") or os.path.join(USER_HOME, ".local_chroma_data_v12")
+CHROMA_DATA_DIR = os.environ.get("CHROMA_DB_PATH") or os.path.join(
+    USER_HOME, ".local_chroma_data_v12"
+)
 
 
 def isolated_chroma_upsert(db_path, docs, metas, ids, embeddings):
@@ -18,29 +21,24 @@ def isolated_chroma_upsert(db_path, docs, metas, ids, embeddings):
     class DummyEmbeddingFunction:
         def __call__(self, input):
             return [[0.0] * 3072 for _ in input]
+
         def name(self):
             return "gemini-dummy"
 
     logger.info("Booting ChromaDB at %s...", db_path)
     try:
         client = chromadb.PersistentClient(
-            path=db_path,
-            settings=Settings(anonymized_telemetry=False)
+            path=db_path, settings=Settings(anonymized_telemetry=False)
         )
 
         collection = client.get_or_create_collection(
             name="research_papers_v12",
             embedding_function=DummyEmbeddingFunction(),
-            metadata={"hnsw:space": "cosine"}
+            metadata={"hnsw:space": "cosine"},
         )
 
         logger.info("Executing C++ upsert for %d vectors...", len(ids))
-        collection.upsert(
-            documents=docs,
-            metadatas=metas,
-            ids=ids,
-            embeddings=embeddings
-        )
+        collection.upsert(documents=docs, metadatas=metas, ids=ids, embeddings=embeddings)
         logger.info("Upsert successful!")
         return True
     except Exception as e:
@@ -69,28 +67,34 @@ async def store_document_in_chroma(doc: ParsedDocument):
         for section in doc.sections:
             summary_chunks = chunk_text(section.summary, chunk_size=500, overlap=50)
             for i, chunk in enumerate(summary_chunks):
-                docs_to_insert.append(chunk.replace('\x00', ''))
-                metadatas.append({
-                    "doc_id": doc.doc_id,
-                    "version_id": doc.version_id,
-                    "filename": doc.filename,
-                    "source_type": doc.source_type,
-                    "section_name": section.section_name,
-                    "content_type": "summary"
-                })
+                docs_to_insert.append(chunk.replace("\x00", ""))
+                metadatas.append(
+                    {
+                        "doc_id": doc.doc_id,
+                        "version_id": doc.version_id,
+                        "filename": doc.filename,
+                        "source_type": doc.source_type,
+                        "section_name": section.section_name,
+                        "content_type": "summary",
+                        "doi": doc.doi or "",
+                    }
+                )
                 ids.append(f"{doc.doc_id}_{section.section_name}_summary_{i}")
 
             raw_chunks = chunk_text(section.raw_text, chunk_size=1200, overlap=200)
             for i, chunk in enumerate(raw_chunks):
-                docs_to_insert.append(chunk.replace('\x00', ''))
-                metadatas.append({
-                    "doc_id": doc.doc_id,
-                    "version_id": doc.version_id,
-                    "filename": doc.filename,
-                    "source_type": doc.source_type,
-                    "section_name": section.section_name,
-                    "content_type": "raw_text"
-                })
+                docs_to_insert.append(chunk.replace("\x00", ""))
+                metadatas.append(
+                    {
+                        "doc_id": doc.doc_id,
+                        "version_id": doc.version_id,
+                        "filename": doc.filename,
+                        "source_type": doc.source_type,
+                        "section_name": section.section_name,
+                        "content_type": "raw_text",
+                        "doi": doc.doi or "",
+                    }
+                )
                 ids.append(f"{doc.doc_id}_{section.section_name}_raw_{i}")
 
         if not docs_to_insert:
@@ -139,7 +143,8 @@ async def store_document_in_chroma(doc: ParsedDocument):
                 "Embedding batch %d/%d (chunks %d-%d)...",
                 batch_start // EMBED_BATCH_SIZE + 1,
                 -(-total_chunks // EMBED_BATCH_SIZE),
-                batch_start + 1, batch_end,
+                batch_start + 1,
+                batch_end,
             )
             batch_embeddings = await asyncio.gather(
                 *[_embed_one(text, batch_start + i) for i, text in enumerate(batch)]
@@ -166,7 +171,7 @@ async def store_document_in_chroma(doc: ParsedDocument):
                 docs_to_insert,
                 metadatas,
                 ids,
-                all_embeddings
+                all_embeddings,
             )
 
         logger.info("Handoff complete. Server process remains perfectly stable.")

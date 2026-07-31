@@ -1,15 +1,11 @@
-import os
-import json
-from functools import lru_cache
-
 import aiohttp
-from google.oauth2 import id_token
 from google.auth.transport import requests
+from google.oauth2 import id_token
 
 from app.core.config import get_settings
-from app.utils.firebase import get_firebase_auth
 from app.core.database import SessionLocal
 from app.models.user import User
+from app.utils.firebase import get_firebase_auth
 
 settings = get_settings()
 
@@ -24,7 +20,7 @@ async def verify_firebase_token(token: str) -> dict | None:
             "display_name": decoded.get("name", ""),
             "photo_url": decoded.get("picture", ""),
         }
-    except Exception as e:
+    except Exception:
         pass
 
     try:
@@ -39,7 +35,7 @@ async def verify_firebase_token(token: str) -> dict | None:
             "display_name": decoded.get("name", ""),
             "photo_url": decoded.get("picture", ""),
         }
-    except Exception as e:
+    except Exception:
         pass
 
     try:
@@ -69,9 +65,7 @@ async def verify_firebase_token(token: str) -> dict | None:
 async def get_or_create_user(firebase_user: dict) -> User:
     db = SessionLocal()
     try:
-        existing = db.query(User).filter(
-            User.firebase_uid == firebase_user["uid"]
-        ).first()
+        existing = db.query(User).filter(User.firebase_uid == firebase_user["uid"]).first()
 
         if existing:
             existing.email = firebase_user.get("email", existing.email)

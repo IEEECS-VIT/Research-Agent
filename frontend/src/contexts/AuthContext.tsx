@@ -7,7 +7,7 @@ import {
   getIdToken,
 } from 'firebase/auth'
 import type { User as FirebaseUser } from 'firebase/auth'
-import { auth } from '../services/firebase'
+import { auth, firebaseEnabled } from '../services/firebase'
 
 interface AuthUser {
   uid: string
@@ -36,6 +36,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!firebaseEnabled || !auth) {
+      setUser(null)
+      setLoading(false)
+      return
+    }
+
     const unsub = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
         const token = await getIdToken(firebaseUser)
@@ -55,11 +61,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signInWithGoogle = async () => {
+    if (!auth) {
+      throw new Error('Google sign-in is disabled until Firebase env vars are configured.')
+    }
+
     const provider = new GoogleAuthProvider()
-    await signInWithPopup(auth, provider)
+    try {
+      await signInWithPopup(auth, provider)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Google sign-in failed.'
+      throw new Error(message)
+    }
   }
 
   const logout = async () => {
+    if (!auth) {
+      setUser(null)
+      return
+    }
+
     await signOut(auth)
     setUser(null)
   }

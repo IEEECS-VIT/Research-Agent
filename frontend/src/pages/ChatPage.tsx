@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, ChatMessage, ChatSession, Source } from '../services/api'
+import api from '../services/api'
+import type { ChatMessage, ChatSession, Source } from '../services/api'
 import { Send, MessageSquare, Plus, Trash2, ChevronLeft, ChevronRight, Loader2, FileText, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
 
 function SourceCard({ source }: { source: Source }) {
@@ -168,7 +169,7 @@ export function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const queryClient = useQueryClient()
 
-  const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
+  const { data: sessions = [] } = useQuery({
     queryKey: ['chat-sessions'],
     queryFn: async () => {
       const res = await api.get<ChatSession[]>('/chat/sessions')

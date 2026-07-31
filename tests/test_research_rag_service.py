@@ -1,6 +1,8 @@
 import os
+from datetime import UTC
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 os.environ["GEMINI_API_KEY"] = "test-key"
 
@@ -8,6 +10,7 @@ os.environ["GEMINI_API_KEY"] = "test-key"
 @pytest.fixture(autouse=True)
 def reset_agent():
     from app.services.research_rag_service import reset_rag_agent
+
     reset_rag_agent()
     yield
 
@@ -15,6 +18,7 @@ def reset_agent():
 class TestIntentClassification:
     def _make_agent(self):
         from app.services.research_rag_service import RAGAgent
+
         return RAGAgent()
 
     def test_rule_based_contradictions(self):
@@ -39,7 +43,9 @@ class TestIntentClassification:
 
     def test_rule_based_literature_search(self):
         agent = self._make_agent()
-        intent = agent._rule_based_intent("Find papers that support the claim that coffee causes cancer")
+        intent = agent._rule_based_intent(
+            "Find papers that support the claim that coffee causes cancer"
+        )
         assert intent == "literature_search"
 
     def test_rule_based_explore(self):
@@ -55,6 +61,7 @@ class TestIntentClassification:
     @pytest.mark.asyncio
     async def test_classify_intent_fallback_to_rules(self):
         from app.services.research_rag_service import RAGAgent
+
         agent = RAGAgent()
         intent = await agent.classify_intent("Show me all contradictions")
         assert intent == "graph_contradictions"
@@ -64,8 +71,9 @@ class TestRAGAgentGeneral:
     @pytest.mark.asyncio
     async def test_answer_question_no_graph(self):
         from app.services.research_rag_service import RAGAgent
+
         agent = RAGAgent()
-        with patch.object(agent, '_graph', None):
+        with patch.object(agent, "_graph", None):
             answer, sources = await agent.answer_question("Hello")
             assert isinstance(answer, str)
             assert isinstance(sources, list)
@@ -73,23 +81,28 @@ class TestRAGAgentGeneral:
     @pytest.mark.asyncio
     async def test_answer_contradictions_no_graph(self):
         from app.services.research_rag_service import RAGAgent
+
         agent = RAGAgent()
-        with patch.object(agent, '_graph', None):
-            answer, sources = await agent.answer_question("What contradictions exist in my knowledge graph?")
+        with patch.object(agent, "_graph", None):
+            answer, sources = await agent.answer_question(
+                "What contradictions exist in my knowledge graph?"
+            )
             assert "empty" in answer.lower() or "unavailable" in answer.lower()
             assert isinstance(sources, list)
 
     @pytest.mark.asyncio
     async def test_literature_search_no_llm(self):
         from app.services.research_rag_service import RAGAgent
+
         agent = RAGAgent()
-        with patch.object(agent, '_llm_client', None), patch.object(agent, '_graph', None):
+        with patch.object(agent, "_llm_client", None), patch.object(agent, "_graph", None):
             answer, sources = await agent._literature_search("What papers support claim X?")
             assert isinstance(answer, str)
             assert isinstance(sources, list)
 
     def test_reset_agent(self):
         from app.services.research_rag_service import get_rag_agent, reset_rag_agent
+
         agent1 = get_rag_agent()
         reset_rag_agent()
         agent2 = get_rag_agent()
@@ -99,6 +112,7 @@ class TestRAGAgentGeneral:
 class TestChatSchema:
     def test_source_model(self):
         from app.schemas.chat import Source
+
         s = Source(doc_id="doc1", filename="test.pdf", confidence=0.85)
         assert s.doc_id == "doc1"
         assert s.filename == "test.pdf"
@@ -106,9 +120,11 @@ class TestChatSchema:
         assert s.relation_type is None
 
     def test_message_response_model(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
+
         from app.schemas.chat import MessageResponse, Source
-        now = datetime.now(timezone.utc)
+
+        now = datetime.now(UTC)
         msg = MessageResponse(
             id="msg1",
             session_id="session1",
@@ -123,6 +139,7 @@ class TestChatSchema:
 
     def test_send_message_request(self):
         from app.schemas.chat import SendMessageRequest
+
         req = SendMessageRequest(message="Hello")
         assert req.message == "Hello"
         assert req.session_id is None
@@ -135,19 +152,23 @@ class TestChatSchema:
 class TestChatModel:
     def test_chat_session_model(self):
         from app.models.chat import ChatSession
+
         session = ChatSession(user_id="user1", title="Test")
         assert session.user_id == "user1"
         assert session.title == "Test"
 
     def test_chat_session_str_id(self):
-        from app.models.chat import ChatSession
         import uuid
+
+        from app.models.chat import ChatSession
+
         session = ChatSession(id=str(uuid.uuid4()), user_id="user2")
         assert session.id is not None
         assert len(session.id) > 10
 
     def test_chat_message_model(self):
         from app.models.chat import ChatMessage
+
         msg = ChatMessage(
             session_id="session1",
             role="user",

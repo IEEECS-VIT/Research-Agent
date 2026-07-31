@@ -1,16 +1,18 @@
-import uuid
-from datetime import datetime, timezone
-from sqlalchemy import Column, String, DateTime, Text, Integer, Float, ForeignKey, Enum as SAEnum
-from app.core.database import Base
 import enum
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+
+from app.core.database import Base
 
 
-class SourceType(str, enum.Enum):
+class SourceType(enum.StrEnum):
     DRAFT = "draft"
     PAPER = "paper"
 
 
-class ProcessingStatus(str, enum.Enum):
+class ProcessingStatus(enum.StrEnum):
     PENDING = "pending"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -29,8 +31,13 @@ class Document(Base):
     mime_type = Column(String, nullable=True)
     source_type = Column(String, nullable=False)
     version_id = Column(String, default="0")
+    doi = Column(String, nullable=True)
     processing_status = Column(String, default=ProcessingStatus.PENDING.value)
     total_sections = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )

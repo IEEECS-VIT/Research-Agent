@@ -7,6 +7,10 @@ const api = axios.create({
 })
 
 api.interceptors.request.use(async (config) => {
+  if (!auth) {
+    return config
+  }
+
   const user = auth.currentUser
   if (user) {
     const token = await getIdToken(user)
@@ -18,7 +22,7 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    if (err.response?.status === 401 && auth) {
       auth.signOut()
     }
     return Promise.reject(err)
@@ -75,6 +79,7 @@ export const documentsApi = {
   get: (id: string) => api.get<Document>(`/documents/${id}`),
   delete: (id: string) => api.delete(`/documents/${id}`),
   rollVersion: () => api.post('/documents/roll-version'),
+  annotate: (id: string) => api.post(`/documents/${id}/annotate`, null, { responseType: 'blob' }),
 }
 
 export const analysisApi = {

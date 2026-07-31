@@ -1,7 +1,8 @@
 import pytest
-from app.models.document import Document, SourceType, ProcessingStatus
+
+from app.core.database import Base, SessionLocal, engine
+from app.models.document import Document, ProcessingStatus, SourceType
 from app.models.user import User
-from app.core.database import Base, engine, SessionLocal
 
 
 @pytest.fixture(scope="module")

@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
 from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
 
 class SectionSummary(BaseModel):
     section_name: str
@@ -13,8 +15,10 @@ class Claim(BaseModel):
     subject: str | None = None
     context: str | None = None
 
+
 class ClaimMatch(BaseModel):
     """A candidate claim matched to a query claim during comparison."""
+
     retrieved_id: str
     retrieved_text: str
     metadata: dict
@@ -27,6 +31,7 @@ class ClaimMatch(BaseModel):
 
 class ComparisonResult(BaseModel):
     """Result of comparing a single claim against retrieved candidates."""
+
     claim_id: str
     claim_text: str
     source_doc_type: str
@@ -34,16 +39,19 @@ class ComparisonResult(BaseModel):
     match_count: int
     matches: list[ClaimMatch]
 
+
 class ParsedDocument(BaseModel):
     doc_id: str = Field(default_factory=lambda: str(uuid4()))
     version_id: str = "0"  # PIVOT: Removed datetime, set default to "0"
     filename: str
     source_type: str
+    doi: str | None = None
     sections: list[SectionSummary]
     claims: list[Claim] = []
     comparisons: list[ComparisonResult] = []  # Populated after cross-document comparison
     total_sections: int
     status: str
+
 
 class UploadResponse(BaseModel):
     doc_id: str
