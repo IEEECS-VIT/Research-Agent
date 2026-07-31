@@ -1,74 +1,41 @@
 # retrieval_engine.py
 import os
-import chromadb
-from chromadb.config import Settings
-from GraphEngine.utils.constants import TOP_K, CHROMA_DB_PATH, COLLECTION_NAME, CHUNK_TYPE
+from pinecone import Pinecone
+from GraphEngine.utils.constants import TOP_K, CHUNK_TYPE
+from app.core.config import get_settings
+
+_pc = None
+_index = None
+
+def _get_index():
+    """Get or create the Pinecone index, lazy-loaded on first use."""
+    global _pc, _index
+    if _index is None:
+        settings = get_settings()
+        if not settings.pinecone_api_key:
+            raise ValueError("PINECONE_API_KEY is not set.")
+        _pc = Pinecone(api_key=settings.pinecone_api_key)
+        _index = _pc.Index(settings.pinecone_index_name)
+    return _index
 
 
-class _DummyEmbeddingFunction:
-    """
-    ChromaDB requires an embedding function at collection-open time even when
-    we supply our own pre-computed embeddings at query time.
-    Must match the one used in the ingestion pipeline's isolated worker.
-    """
-    def __call__(self, input):
-        return [[0.0] * 3072 for _ in input]
-
-    def name(self):
-        return "gemini-dummy"
-
-
-# Lazy-loaded Chroma client and collection to avoid startup failures.
-_client = None
-_collection = None
-
-
-def _get_client():
-    """Get or create the persistent Chroma client."""
-    global _client
-    if _client is None:
-        _client = chromadb.PersistentClient(
-            path=CHROMA_DB_PATH,
-            settings=Settings(anonymized_telemetry=False)
-        )
-    return _client
-
-
-def _get_collection():
-    """Get or create the collection, lazy-loaded on first use."""
-    global _collection
-    if _collection is None:
-        client = _get_client()
-        _collection = client.get_collection(
-            name=COLLECTION_NAME,
-            embedding_function=_DummyEmbeddingFunction()
-        )
-    return _collection
-
-
-def _build_where_clause(
+def _build_pinecone_filter(
     source_type: str | None = None,
     chunk_type: str | None = None,
     version_id: str | None = None,
 ) -> dict | None:
-    """Build a ChromaDB where clause with metadata filters.
+    """Build a Pinecone metadata filter.
 
-    Args:
-        source_type: "draft" or "paper" or None to skip.
-        chunk_type:  "summary" or "raw_text" or None to skip.
-        version_id:  Document version ID or None to skip.
-
-    Returns:
-        A where clause dict suitable for Chroma queries, or None if no filters.
+    Pinecone supports MongoDB-like query operators ($eq, $in).
     """
     conditions = []
 
     if source_type:
-        conditions.append({"source_type": source_type})
+        conditions.append({"source_type": {"$eq": source_type}})
     if chunk_type:
-        conditions.append({"content_type": chunk_type})
+        conditions.append({"content_type": {"$eq": chunk_type}})
     if version_id:
-        conditions.append({"version_id": version_id})
+        conditions.append({"version_id": {"$eq": version_id}})
 
     if not conditions:
         return None
@@ -85,10 +52,10 @@ def retrieve_chunks(
     n_results: int = TOP_K,
 ) -> dict:
     """
-    Query ChromaDB with metadata-aware cosine similarity retrieval.
+    Query Pinecone with metadata-aware cosine similarity retrieval.
 
-    Uses Chroma's default cosine distance metric to find top-K nearest neighbours
-    subject to optional metadata filters.
+    This function wraps Pinecone's API but returns data in the same format
+    expected by the original ChromaDB implementation to avoid breaking changes.
 
     Args:
         query_embedding: Pre-computed Gemini embedding vector (dim=3072).
@@ -98,28 +65,53 @@ def retrieve_chunks(
         n_results:       Number of nearest neighbours to return.
 
     Returns:
-        Raw ChromaDB result dict with keys:
+        Raw ChromaDB-style result dict with keys:
             documents   – list[list[str]]
             metadatas   – list[list[dict]]
             distances   – list[list[float]]
             ids         – list[list[str]]
     """
-    where_clause = _build_where_clause(
+    filter_clause = _build_pinecone_filter(
         source_type=source_type,
         chunk_type=chunk_type,
         version_id=version_id,
     )
 
-    query_kwargs: dict = dict(
-        query_embeddings=[query_embedding],
-        n_results=n_results,
-        include=["documents", "metadatas", "distances"],
-    )
-    if where_clause:
-        query_kwargs["where"] = where_clause
+    index = _get_index()
+    
+    query_kwargs = {
+        "vector": query_embedding,
+        "top_k": n_results,
+        "include_metadata": True
+    }
+    if filter_clause:
+        query_kwargs["filter"] = filter_clause
 
-    collection = _get_collection()
-    return collection.query(**query_kwargs)
+    response = index.query(**query_kwargs)
+    
+    # Translate Pinecone response back to ChromaDB format
+    documents = []
+    metadatas = []
+    distances = []
+    ids = []
+    
+    for match in response.get("matches", []):
+        meta = match.get("metadata", {})
+        # ChromaDB distance = 1 - cosine_similarity (for cosine metric)
+        # Pinecone returns similarity score, so distance = 1 - score
+        dist = 1.0 - match.get("score", 0.0)
+        
+        documents.append(meta.get("text", ""))
+        metadatas.append(meta)
+        distances.append(dist)
+        ids.append(match.get("id"))
+        
+    return {
+        "documents": [documents],
+        "metadatas": [metadatas],
+        "distances": [distances],
+        "ids": [ids]
+    }
 
 
 def retrieve_cross_type(
@@ -134,13 +126,6 @@ def retrieve_cross_type(
 
     Given the source document's type, this always queries the *opposite* type
     so that draft↔draft and paper↔paper comparisons are impossible.
-
-    Args:
-        query_embedding: Embedding of a chunk from the source document.
-        source_doc_type: "draft" or "paper" — the type of the query document.
-        chunk_type:      "summary" | "raw_text" | None.
-        version_id:      Optional version ID to filter by (e.g., to query only a specific version).
-        n_results:       Number of neighbours to return.
     """
     if source_doc_type not in ("draft", "paper"):
         raise ValueError("source_doc_type must be 'draft' or 'paper'.")
@@ -164,35 +149,6 @@ def retrieve_by_claim_embedding(
 ) -> dict:
     """
     Retrieve top-K candidate claims/chunks for a given claim embedding.
-
-    This is the primary retrieval API for claim-level reasoning. It enforces
-    cross-type retrieval (Draft → Paper or vice versa) and supports version-aware
-    filtering. Uses cosine similarity via Chroma's default distance metric.
-
-    Example usage:
-        # Given a claim from a draft document, find supporting/contradicting claims
-        # from papers in the same version:
-        result = retrieve_by_claim_embedding(
-            claim_embedding=gemini_embedding_vector,
-            source_doc_type="draft",
-            query_version_id="3",
-            chunk_type="summary",
-            n_results=15
-        )
-
-    Args:
-        claim_embedding:  Pre-computed Gemini embedding (dim=3072).
-        source_doc_type:  "draft" or "paper" — the source document type.
-        query_version_id: Filter to only chunks from this version (or None for all versions).
-        chunk_type:       "summary" or "raw_text" or None for both.
-        n_results:        Number of top-K results.
-
-    Returns:
-        ChromaDB query result dict with keys:
-            documents   – list[list[str]]  (chunk texts)
-            metadatas   – list[list[dict]] (chunk metadata including doc_id, version_id, section_name)
-            distances   – list[list[float]] (cosine distances, 0 = identical, 2 = opposite)
-            ids         – list[list[str]]  (chunk IDs)
     """
     return retrieve_cross_type(
         query_embedding=claim_embedding,

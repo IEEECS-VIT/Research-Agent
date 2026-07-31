@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.document import Document, ProcessingStatus
-from ingestion_pipeline.chroma_store import store_document_in_chroma
+from ingestion_pipeline.pinecone_store import store_document_in_pinecone
 from ingestion_pipeline.schemas import SectionSummary
 from ingestion_pipeline.summarizer import run_pipeline
 
@@ -41,9 +41,9 @@ async def process_document(
         )
 
         try:
-            await store_document_in_chroma(doc)
+            await store_document_in_pinecone(doc)
         except Exception as e:
-            logger.warning("ChromaDB store failed (non-fatal): %s", e)
+            logger.warning("Pinecone store failed (non-fatal): %s", e)
 
         document.doi = doi  # type: ignore
         document.total_sections = len(summaries)  # type: ignore
