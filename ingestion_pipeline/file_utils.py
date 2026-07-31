@@ -16,12 +16,34 @@ def validate_extension(filename: str) -> bool:
         return False
 
 
+import boto3
+from botocore.exceptions import NoCredentialsError
+from app.core.config import get_settings
+
 async def save_upload(file) -> Path:
     try:
         UPLOAD_DIR.mkdir(exist_ok=True)
         path = UPLOAD_DIR / file.filename
         with open(path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+            
+        # Also upload to AWS S3
+        settings = get_settings()
+        if settings.aws_access_key_id and settings.aws_bucket_name:
+            try:
+                s3 = boto3.client(
+                    "s3",
+                    aws_access_key_id=settings.aws_access_key_id,
+                    aws_secret_access_key=settings.aws_secret_access_key,
+                    region_name=settings.aws_region_name
+                )
+                s3.upload_file(str(path), settings.aws_bucket_name, file.filename)
+                logger.info("Successfully uploaded %s to S3 bucket %s", file.filename, settings.aws_bucket_name)
+            except NoCredentialsError:
+                logger.error("AWS credentials not found. File saved locally only.")
+            except Exception as e:
+                logger.error("Failed to upload to S3: %s", e)
+                
         return path
     except Exception as e:
         logger.error("Error saving upload: %s", e, exc_info=True)
